@@ -3,6 +3,7 @@ import UIKit
 
 struct ContentView: View {
     @EnvironmentObject var session: SessionManager
+    @StateObject private var networkMonitor = NetworkMonitor.shared
     
     var body: some View {
         let _ = print("🔍 ContentView rendering - isAuthenticated: \(session.isAuthenticated), hasCompletedOnboarding: \(session.hasCompletedOnboarding), isLoading: \(session.isLoading)")
@@ -29,6 +30,7 @@ struct ContentView: View {
                         insertion: .opacity.combined(with: .scale(scale: 1.05)),
                         removal: .opacity
                     ))
+                    .withOfflineAlert()
             } else if session.isAuthenticated && !session.hasCompletedOnboarding {
                 // First-time user - show onboarding flow
                 OnboardingFlowView()

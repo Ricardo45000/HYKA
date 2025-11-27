@@ -8,8 +8,6 @@ struct OnboardingStepSignUpView: View {
     @State private var email = ""
     @State private var password = ""
     @State private var isLoading = false
-    @State private var errorMessage: String?
-    @State private var showError = false
     @State private var showSignUpModal = false
 
     var body: some View {
@@ -37,7 +35,7 @@ struct OnboardingStepSignUpView: View {
                         
                         TextField("your.email@example.com", text: $email)
                             .font(HYKATheme.input)
-                            .foregroundColor(HYKATheme.Light.foreground)
+                            .foregroundColor(.black) // Typed text in black
                             .keyboardType(.emailAddress)
                             .autocapitalization(.none)
                             .padding(.horizontal, HYKATheme.spacingM)
@@ -59,7 +57,7 @@ struct OnboardingStepSignUpView: View {
                         
                         SecureField("Create a password", text: $password)
                             .font(HYKATheme.input)
-                            .foregroundColor(HYKATheme.Light.foreground)
+                            .foregroundColor(.black) // Typed text in black
                             .padding(.horizontal, HYKATheme.spacingM)
                             .padding(.vertical, HYKATheme.spacingM)
                             .frame(height: 48)
@@ -72,15 +70,6 @@ struct OnboardingStepSignUpView: View {
                         
                     }
                     
-                    // Error message
-                    if showError, let errorMessage = errorMessage {
-                        HYKAUIAlert(
-                            title: "Sign In Failed",
-                            description: errorMessage,
-                            variant: .destructive,
-                            icon: "exclamationmark.triangle"
-                        )
-                    }
                     
                     // Sign In button
                     Button {
@@ -209,8 +198,7 @@ struct OnboardingStepSignUpView: View {
                 onUserExists: {
                     showSignUpModal = false
                     // Show error message
-                    errorMessage = "You already have an account. Please sign in instead."
-                    showError = true
+                    ErrorManager.shared.showError(title: "Account Exists", message: "You already have an account. Please sign in instead.")
                 }
             )
         }
@@ -222,13 +210,12 @@ struct OnboardingStepSignUpView: View {
                 onNext()
             }
         }
+        .withErrorDisplay()
     }
     
     // MARK: - Functions
     
     private func handleSignIn() async {
-        showError = false
-        errorMessage = nil
         isLoading = true
         
         do {
@@ -239,9 +226,9 @@ struct OnboardingStepSignUpView: View {
             // - Returning users → Main tabs
             print("✅ Sign in successful - ContentView will handle routing")
         } catch {
-            // Show error message
-            errorMessage = parseError(error)
-            showError = true
+            // Show error using ErrorManager
+            let userMessage = parseError(error)
+            ErrorManager.shared.showError(title: "Sign In Failed", message: userMessage)
         }
         
         isLoading = false
@@ -266,7 +253,6 @@ struct OnboardingStepSignUpView: View {
     
     private func handleGoogleSignIn() async {
         isLoading = true
-        showError = false
         
         do {
             try await session.signInWithGoogle()
@@ -274,8 +260,7 @@ struct OnboardingStepSignUpView: View {
             // Callback will be handled in MainApp via deep link
             print("🔄 Google OAuth flow initiated...")
         } catch {
-            errorMessage = "Failed to initiate Google sign in. Please try again."
-            showError = true
+            ErrorManager.shared.showError(error, title: "Google Sign In Failed")
         }
         
         isLoading = false
@@ -283,7 +268,6 @@ struct OnboardingStepSignUpView: View {
     
     private func handleFacebookSignIn() async {
         isLoading = true
-        showError = false
         
         do {
             try await session.signInWithFacebook()
@@ -291,8 +275,7 @@ struct OnboardingStepSignUpView: View {
             // Callback will be handled in MainApp via deep link
             print("🔄 Facebook OAuth flow initiated...")
         } catch {
-            errorMessage = "Failed to initiate Facebook sign in. Please try again."
-            showError = true
+            ErrorManager.shared.showError(error, title: "Facebook Sign In Failed")
         }
         
         isLoading = false

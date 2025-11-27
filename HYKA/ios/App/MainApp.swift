@@ -1,14 +1,18 @@
 import SwiftUI
 import Combine
 import UIKit
+import UserNotifications
 
 @main
 struct HYKAApp: App {
     @StateObject var session = SessionManager()
+    @StateObject var pushService = PushNotificationService.shared
     @State private var showSplash = true
     @State private var splashOpacity: Double = 1.0
     @State private var splashScale: CGFloat = 1.0
     @State private var pendingURL: URL? = nil
+    
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     
     init() {
         // Log on app initialization
@@ -18,6 +22,11 @@ struct HYKAApp: App {
         print("   Deep link handlers should be attached")
         print("═══════════════════════════════════════")
         print("")
+        
+        // Request push notification permissions
+        Task {
+            await PushNotificationService.shared.requestAuthorization()
+        }
     }
 
     var body: some Scene {
@@ -117,7 +126,7 @@ struct HYKAApp: App {
         }
     }
     
-    // Centralized deep link handler
+        // Centralized deep link handler
     private func handleDeepLink(_ url: URL) {
         print("")
         print("═══════════════════════════════════════")
@@ -132,11 +141,20 @@ struct HYKAApp: App {
         print("═══════════════════════════════════════")
         print("")
         
-        // Handle OAuth callback deep links - support both custom scheme and Universal Links
         let scheme = url.scheme ?? ""
         let host = url.host ?? ""
         let path = url.path
         
+        // Handle activity deep links (from push notifications)
+        if scheme == "hyka" && host == "activity" {
+            let activityId = path.replacingOccurrences(of: "/", with: "")
+            print("📱 Activity deep link detected: \(activityId)")
+            // TODO: Navigate to activity detail view
+            // You'll need to implement navigation to show activity and race performance
+            return
+        }
+        
+        // Handle OAuth callback deep links - support both custom scheme and Universal Links
         print("🔍 Checking URL against OAuth pattern...")
         print("   Scheme: \(scheme)")
         print("   Host: \(host)")
@@ -188,5 +206,54 @@ struct HYKAApp: App {
             print("   Got: \(scheme)://\(host)\(path)")
             print("   Full URL: \(url.absoluteString)")
         }
+    }
+}
+
+// MARK: - AppDelegate for Push Notifications
+class AppDelegate: NSObject, UIApplicationDelegate {
+    // Store device token temporarily if user not logged in yet
+    private var pendingDeviceToken: Data?
+    
+    func application(_ application: UIApplication, 
+                    didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
+        // Register for remote notifications
+        application.registerForRemoteNotifications()
+        return true
+    }
+    
+    func application(_ application: UIApplication, 
+                    didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        // Store token temporarily - will be registered when user logs in
+        pendingDeviceToken = deviceToken
+        print("📱 Device token received, will register when user logs in")
+        
+        // Try to register immediately if we can get user ID from stored session
+        Task { @MainActor in
+            // Check if user ID is stored in UserDefaults (from previous session)
+            if let userIdString = UserDefaults.standard.string(forKey: "hyka.user.id"),
+               let userId = UUID(uuidString: userIdString) {
+                print("📱 Found stored user ID, registering device token")
+                await PushNotificationService.shared.registerDeviceToken(deviceToken, userId: userId)
+                pendingDeviceToken = nil
+            } else {
+                print("📱 No user ID found, device token will be registered on next login")
+            }
+        }
+    }
+    
+    func application(_ application: UIApplication, 
+                    didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        print("❌ Failed to register for remote notifications: \(error)")
+    }
+    
+    // Method to register device token when user logs in
+    func registerDeviceTokenForUser(_ userId: UUID) async {
+        guard let token = pendingDeviceToken else {
+            print("⚠️ No pending device token to register")
+            return
+        }
+        
+        await PushNotificationService.shared.registerDeviceToken(token, userId: userId)
+        pendingDeviceToken = nil
     }
 }

@@ -29,25 +29,91 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 serve(async (req) => {
   const startTime = Date.now()
   
+  // Handle CORS preflight requests
+  if (req.method === 'OPTIONS') {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, User-Agent',
+        'Access-Control-Max-Age': '86400',
+      },
+    })
+  }
+  
   try {
     console.log("🏥 Garmin Health Webhook received")
     console.log("   Method:", req.method)
+    console.log("   URL:", req.url)
     console.log("   Headers:", Object.fromEntries(req.headers.entries()))
     
-    // Verify request is from Garmin
+    // Extract webhook secret from URL path
+    // Expected format: /functions/v1/garmin-health-webhook/SECRET_TOKEN
+    const url = new URL(req.url)
+    const pathParts = url.pathname.split('/').filter(p => p)
+    const functionNameIndex = pathParts.findIndex(p => p === 'garmin-health-webhook')
+    const secretFromPath = functionNameIndex >= 0 && pathParts[functionNameIndex + 1] 
+      ? pathParts[functionNameIndex + 1] 
+      : null
+    
+    // Get expected webhook secret from environment (optional)
+    const expectedSecret = Deno.env.get('GARMIN_WEBHOOK_SECRET') || 'garmin-webhook-secret-2024'
+    
+    // Verify secret if provided in path
+    if (secretFromPath) {
+      if (secretFromPath === expectedSecret) {
+        console.log("✅ Valid webhook secret verified")
+      } else {
+        console.log("⚠️ Invalid webhook secret provided")
+      }
+    } else {
+      console.log("ℹ️ No webhook secret in URL path")
+    }
+    
+    // Verify request is from Garmin (but don't reject - just log)
     const userAgent = req.headers.get('user-agent') || ''
     if (!userAgent.includes('Garmin')) {
       console.log("⚠️ Request not from Garmin (user-agent:", userAgent, ")")
-      // Still return 200 to prevent retries
+      // Still process - might be from testing or other sources
+    } else {
+      console.log("✅ Verified Garmin User-Agent")
     }
     
-    // Parse request body
-    const body = await req.json()
+    // Parse request body (handle both JSON and form data)
+    let body: any
+    try {
+      const contentType = req.headers.get('content-type') || ''
+      if (contentType.includes('application/json')) {
+        body = await req.json()
+      } else {
+        // Try to parse as JSON anyway (Garmin usually sends JSON)
+        const text = await req.text()
+        body = text ? JSON.parse(text) : {}
+      }
+    } catch (parseError) {
+      console.error("❌ Error parsing request body:", parseError)
+      // Return 200 to prevent Garmin from retrying
+      return new Response("OK", { 
+        status: 200,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Content-Type': 'text/plain'
+        }
+      })
+    }
+    
     console.log("   Body keys:", Object.keys(body))
     console.log("   Body:", JSON.stringify(body, null, 2))
     
     // Extract Garmin user ID
-    const garminUserId = body.userId || body.garminUserId || body.user_id
+    // Garmin sends userId nested in arrays: userMetrics[0].userId
+    let garminUserId = body.userId || body.garminUserId || body.user_id
+    
+    // If not at top level, check inside userMetrics array
+    if (!garminUserId && body.userMetrics && Array.isArray(body.userMetrics) && body.userMetrics.length > 0) {
+      garminUserId = body.userMetrics[0].userId || body.userMetrics[0].garminUserId
+    }
     
     if (!garminUserId) {
       console.error("❌ Missing garminUserId in health webhook")
@@ -63,6 +129,7 @@ serve(async (req) => {
     
     // Look up HYKA user
     console.log("🔍 Looking up HYKA user...")
+    console.log("   Searching for garmin_user_id:", garminUserId)
     
     const { data: connection, error: lookupError } = await supabase
       .from('garmin_connections')
@@ -72,6 +139,11 @@ serve(async (req) => {
     
     if (lookupError || !connection) {
       console.log("⚠️ No HYKA user found for Garmin user:", garminUserId)
+      console.log("   Lookup error:", lookupError?.message || "No connection found")
+      console.log("   This could mean:")
+      console.log("   - User disconnected their Garmin")
+      console.log("   - Connection not yet established")
+      console.log("   - garmin_user_id mismatch")
       return new Response("OK", { status: 200 })
     }
     
@@ -82,17 +154,25 @@ serve(async (req) => {
     let metricsData: any = null
     
     // Handle different health webhook types
+    // Garmin sends data in arrays, so extract first element
     if (body.userMetrics) {
       // User Metrics webhook (contains fitness age, VO2 max, etc.)
-      metricsData = body.userMetrics
+      // Can be array or object
+      metricsData = Array.isArray(body.userMetrics) && body.userMetrics.length > 0 
+        ? body.userMetrics[0] 
+        : body.userMetrics
       console.log("📊 Processing User Metrics")
     } else if (body.healthSnapshot) {
       // Health Snapshot webhook
-      metricsData = body.healthSnapshot
+      metricsData = Array.isArray(body.healthSnapshot) && body.healthSnapshot.length > 0
+        ? body.healthSnapshot[0]
+        : body.healthSnapshot
       console.log("📊 Processing Health Snapshot")
     } else if (body.bodyComposition) {
       // Body Composition webhook
-      metricsData = body.bodyComposition
+      metricsData = Array.isArray(body.bodyComposition) && body.bodyComposition.length > 0
+        ? body.bodyComposition[0]
+        : body.bodyComposition
       console.log("📊 Processing Body Composition")
     } else {
       // Generic health data
@@ -111,30 +191,44 @@ serve(async (req) => {
     
     // Store health metrics
     if (fitnessAge !== null || vo2Max !== null || metricsData) {
-      console.log("💾 Storing health metrics...")
+      console.log("💾 Storing health metrics in database...")
+      console.log("   Table: garmin_health_metrics")
+      console.log("   User ID:", connection.user_id)
+      console.log("   Garmin User ID:", garminUserId)
       
-      const { error: insertError } = await supabase
+      const healthData = {
+        user_id: connection.user_id,
+        garmin_user_id: garminUserId,
+        timestamp: timestamp ? new Date(timestamp * 1000).toISOString() : new Date().toISOString(),
+        fitness_age: fitnessAge,
+        vo2_max: vo2Max,
+        raw_data: metricsData || body,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }
+      
+      console.log("   Health data to insert:", JSON.stringify(healthData, null, 2))
+      
+      const { data: insertedData, error: insertError } = await supabase
         .from('garmin_health_metrics')
-        .upsert({
-          user_id: connection.user_id,
-          garmin_user_id: garminUserId,
-          timestamp: timestamp ? new Date(timestamp * 1000).toISOString() : new Date().toISOString(),
-          fitness_age: fitnessAge,
-          vo2_max: vo2Max,
-          raw_data: metricsData || body,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        }, {
+        .upsert(healthData, {
           onConflict: 'user_id,timestamp'
         })
+        .select()
       
       if (insertError) {
-        console.error("❌ Error storing health metrics:", insertError)
+        console.error("❌ Error storing health metrics in database")
+        console.error("   Error:", insertError)
+        console.error("   Error message:", insertError?.message)
+        console.error("   Error details:", JSON.stringify(insertError, null, 2))
+        console.error("   Health data that failed:", JSON.stringify(healthData, null, 2))
       } else {
-        console.log("✅ Health metrics stored")
+        console.log("✅ Health metrics stored successfully in database")
+        console.log("   Inserted data:", JSON.stringify(insertedData, null, 2))
       }
     } else {
       console.log("ℹ️ No fitness age or VO2 max data in webhook")
+      console.log("   Metrics data:", JSON.stringify(metricsData, null, 2))
     }
     
     const duration = Date.now() - startTime
@@ -168,6 +262,14 @@ serve(async (req) => {
 // Configuration Required
 // ============================================================================
 //
+// IMPORTANT: This function must be configured to allow anonymous access
+// in Supabase Dashboard, otherwise Garmin webhooks will receive 401 errors.
+//
+// To make this function public:
+// 1. Go to Supabase Dashboard → Edge Functions → garmin-health-webhook
+// 2. Configure the function to allow unauthenticated requests
+//    OR use the anon key in the webhook URL (not recommended for security)
+//
 // 1. Create garmin_health_metrics table (see schema below)
 //
 // 2. Configure webhooks in Garmin Developer Portal:
@@ -176,6 +278,8 @@ serve(async (req) => {
 //
 // 3. Deploy this function:
 //    supabase functions deploy garmin-health-webhook
+//
+// 4. Make function public in Supabase Dashboard (required for webhooks)
 //
 // ============================================================================
 

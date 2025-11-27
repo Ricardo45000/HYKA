@@ -25,29 +25,104 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 serve(async (req) => {
   const startTime = Date.now()
   
+  // Handle CORS preflight requests
+  if (req.method === 'OPTIONS') {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, User-Agent',
+        'Access-Control-Max-Age': '86400',
+      },
+    })
+  }
+  
   try {
     console.log("🔔 Garmin Permission Webhook received")
     console.log("   Method:", req.method)
+    console.log("   URL:", req.url)
     console.log("   Headers:", Object.fromEntries(req.headers.entries()))
     
-    // Verify request is from Garmin
+    // Extract webhook secret from URL path
+    // Expected format: /functions/v1/garmin-permission-webhook/SECRET_TOKEN
+    const url = new URL(req.url)
+    const pathParts = url.pathname.split('/').filter(p => p)
+    const functionNameIndex = pathParts.findIndex(p => p === 'garmin-permission-webhook')
+    const secretFromPath = functionNameIndex >= 0 && pathParts[functionNameIndex + 1] 
+      ? pathParts[functionNameIndex + 1] 
+      : null
+    
+    // Get expected webhook secret from environment (optional)
+    const expectedSecret = Deno.env.get('GARMIN_WEBHOOK_SECRET') || 'garmin-webhook-secret-2024'
+    
+    // Verify secret if provided in path
+    if (secretFromPath) {
+      if (secretFromPath === expectedSecret) {
+        console.log("✅ Valid webhook secret verified")
+      } else {
+        console.log("⚠️ Invalid webhook secret provided")
+      }
+    } else {
+      console.log("ℹ️ No webhook secret in URL path")
+    }
+    
+    // Verify request is from Garmin (but don't reject - just log)
     const userAgent = req.headers.get('user-agent') || ''
     if (!userAgent.includes('Garmin')) {
       console.log("⚠️ Request not from Garmin (user-agent:", userAgent, ")")
-      // Still return 200 to prevent retries
+      // Still process - might be from testing or other sources
+    } else {
+      console.log("✅ Verified Garmin User-Agent")
     }
     
-    // Parse request body
-    const body = await req.json()
+    // Parse request body (handle both JSON and form data)
+    let body: any
+    try {
+      const contentType = req.headers.get('content-type') || ''
+      if (contentType.includes('application/json')) {
+        body = await req.json()
+      } else {
+        // Try to parse as JSON anyway (Garmin usually sends JSON)
+        const text = await req.text()
+        body = text ? JSON.parse(text) : {}
+      }
+    } catch (parseError) {
+      console.error("❌ Error parsing request body:", parseError)
+      // Return 200 to prevent Garmin from retrying
+      return new Response("OK", { 
+        status: 200,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Content-Type': 'text/plain'
+        }
+      })
+    }
+    
     console.log("   Body:", JSON.stringify(body, null, 2))
+    console.log("   Body keys:", Object.keys(body))
     
     // Extract webhook type and user ID
-    const webhookType = body.type || body.eventType || body.webhookType
-    const garminUserId = body.userId || body.garminUserId || body.user_id
+    // Garmin may send userId in various formats depending on webhook type
+    const webhookType = body.type || body.eventType || body.webhookType || body.event_type
+    const garminUserId = body.userId || body.garminUserId || body.user_id || body.garmin_user_id || 
+                         body.userAccessToken || body.user?.id || body.user?.garminUserId
     
     if (!garminUserId) {
       console.error("❌ Missing garminUserId in webhook")
-      return new Response("OK", { status: 200 })
+      console.error("   Body structure:", JSON.stringify(body, null, 2))
+      console.error("   Available keys:", Object.keys(body))
+      console.error("   Webhook type:", webhookType || "unknown")
+      
+      // Some webhook types might not require garminUserId (e.g., global events)
+      // Still return 200 OK to prevent Garmin from retrying
+      return new Response("OK", { 
+        status: 200,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Content-Type': 'text/plain'
+        }
+      })
     }
     
     console.log("   Webhook Type:", webhookType || "unknown")
@@ -135,12 +210,22 @@ serve(async (req) => {
 // Configuration Required
 // ============================================================================
 //
+// IMPORTANT: This function must be configured to allow anonymous access
+// in Supabase Dashboard, otherwise Garmin webhooks will receive 401 errors.
+//
+// To make this function public:
+// 1. Go to Supabase Dashboard → Edge Functions → garmin-permission-webhook
+// 2. Configure the function to allow unauthenticated requests
+//    OR use the anon key in the webhook URL (not recommended for security)
+//
 // 1. Configure webhook in Garmin Developer Portal:
 //    - URL: https://gvfhtiljkybbrbxoyqsq.supabase.co/functions/v1/garmin-permission-webhook
 //    - Method: POST
 //    - Events: Registration, Permission Changes, Deregistration
 //
 // 2. This webhook is required for certification
+//
+// 3. Make function public in Supabase Dashboard (required for webhooks)
 //
 // ============================================================================
 

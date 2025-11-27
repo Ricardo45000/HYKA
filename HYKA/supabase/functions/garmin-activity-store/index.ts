@@ -23,18 +23,25 @@ serve(async (req) => {
   try {
     console.log("💾 Garmin Activity Store started")
     
-    const { summary, details, garminUserId, callbackUrl, fitFileData } = await req.json()
+    const requestBody = await req.json()
+    console.log("   📥 Request body keys:", Object.keys(requestBody))
+    console.log("   📥 Full request body:", JSON.stringify(requestBody, null, 2))
+    
+    const { summary, details, garminUserId, callbackUrl, fitFileData } = requestBody
     
     if (!summary) {
       console.error("❌ Missing summary data")
+      console.error("   Request body:", JSON.stringify(requestBody, null, 2))
       return new Response(JSON.stringify({ error: "Missing summary" }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' }
       })
     }
     
-    console.log("   Summary ID:", summary.summaryId || summary.id)
-    console.log("   Activity Type:", summary.activityType)
+    console.log("   ✅ Summary received")
+    console.log("   Summary keys:", Object.keys(summary))
+    console.log("   Summary ID:", summary.summaryId || summary.id || summary.activityId || "NOT FOUND")
+    console.log("   Activity Type:", summary.activityType || "NOT FOUND")
     console.log("   Garmin User ID:", garminUserId || "not provided")
     
     // Initialize Supabase
@@ -85,9 +92,12 @@ serve(async (req) => {
     }
     
     // 2. Parse activity data
-    const activityId = summary.summaryId?.toString() || summary.id?.toString()
+    console.log("   🔍 Parsing activity data...")
+    console.log("   Available summary fields:", Object.keys(summary))
+    
+    const activityId = summary.summaryId?.toString() || summary.id?.toString() || summary.activityId?.toString()
     const activityType = summary.activityType || summary.activityTypeKey || 'unknown'
-    const startTimeSeconds = summary.startTimeInSeconds || summary.startTimeGMT || summary.beginTimestamp
+    const startTimeSeconds = summary.startTimeInSeconds || summary.startTimeGMT || summary.beginTimestamp || summary.summaryStartTimeInSeconds
     const durationSeconds = summary.durationInSeconds || summary.elapsedDuration || 0
     const distanceMeters = summary.distanceInMeters || summary.distance || 0
     const elevationGainMeters = summary.totalElevationGainInMeters || summary.elevationGain || 0
@@ -95,6 +105,13 @@ serve(async (req) => {
     const maxHR = summary.maxHeartRateInBeatsPerMinute || summary.maxHeartRate || null
     const activityName = summary.activityName || summary.name || null
     const deviceName = summary.deviceName || summary.device || null
+    
+    console.log("   Parsed values:")
+    console.log("   - activityId:", activityId || "MISSING")
+    console.log("   - activityType:", activityType)
+    console.log("   - startTimeSeconds:", startTimeSeconds || "MISSING")
+    console.log("   - durationSeconds:", durationSeconds)
+    console.log("   - distanceMeters:", distanceMeters)
     
     if (!activityId) {
       console.error("❌ Missing activity ID in summary")
@@ -161,46 +178,115 @@ serve(async (req) => {
       })
     }
     
+    // Round elevation values to integers (database expects integers)
+    const elevationGainRounded = Math.round(computedElevationGain)
+    const elevationLossRounded = Math.round(computedElevationLoss)
+    
+    // Round cadence values to integers if present
+    const avgCadence = summary.averageRunCadenceInStepsPerMinute || summary.averageCadence
+    const maxCadence = summary.maxRunCadenceInStepsPerMinute || summary.maxCadence
+    const avgCadenceRounded = avgCadence ? Math.round(avgCadence) : null
+    const maxCadenceRounded = maxCadence ? Math.round(maxCadence) : null
+    
+    // Round steps to integer if present
+    const stepsRounded = summary.steps ? Math.round(summary.steps) : null
+    
+    // Round calories to integer if present
+    const caloriesRounded = summary.activeKilocalories || summary.calories
+    const caloriesInt = caloriesRounded ? Math.round(caloriesRounded) : null
+    
     // 4. Store activity (upsert to handle duplicates)
-    console.log("💾 Storing activity...")
+    console.log("💾 Storing activity in database...")
+    console.log("   Table: garmin_activities")
+    console.log("   User ID:", userId)
+    console.log("   Garmin Activity ID:", activityId)
+    
+    const activityData = {
+      user_id: userId,
+      garmin_activity_id: activityId,
+      activity_name: activityName,
+      activity_type: activityType,
+      start_time: startTime,
+      start_time_seconds: startTimeSeconds,
+      duration_seconds: durationSeconds,
+      distance_meters: distanceMeters,
+      total_elevation_gain_meters: elevationGainRounded, // Rounded to integer
+      total_elevation_loss_meters: elevationLossRounded, // Rounded to integer
+      average_heart_rate: avgHR ? Math.round(avgHR) : null,
+      max_heart_rate: maxHR ? Math.round(maxHR) : null,
+      average_speed_mps: summary.averageSpeedInMetersPerSecond || null,
+      max_speed_mps: summary.maxSpeedInMetersPerSecond || null,
+      calories: caloriesInt,
+      steps: stepsRounded,
+      average_cadence: avgCadenceRounded,
+      max_cadence: maxCadenceRounded,
+      device_name: deviceName,
+      raw_summary: summary, // Changed from raw_data to raw_summary
+      has_fit_file: !!fitFileData,
+      updated_at: new Date().toISOString()
+    }
+    
+    console.log("   Activity data to insert:", JSON.stringify(activityData, null, 2))
     
     const { data: activity, error: activityError } = await supabase
       .from('garmin_activities')
-      .upsert({
-        user_id: userId,
-        garmin_activity_id: activityId,
-        activity_name: activityName,
-        activity_type: activityType,
-        start_time: startTime,
-        start_time_seconds: startTimeSeconds,
-        duration_seconds: durationSeconds,
-        distance_meters: distanceMeters,
-        total_elevation_gain_meters: computedElevationGain, // Use computed value
-        total_elevation_loss_meters: computedElevationLoss,
-        average_heart_rate: avgHR,
-        max_heart_rate: maxHR,
-        average_speed_mps: summary.averageSpeedInMetersPerSecond || null,
-        max_speed_mps: summary.maxSpeedInMetersPerSecond || null,
-        calories: summary.activeKilocalories || summary.calories || null,
-        steps: summary.steps || null,
-        average_cadence: summary.averageRunCadenceInStepsPerMinute || summary.averageCadence || null,
-        max_cadence: summary.maxRunCadenceInStepsPerMinute || summary.maxCadence || null,
-        device_name: deviceName,
-        raw_summary: summary, // Changed from raw_data to raw_summary
-        has_fit_file: !!fitFileData,
-        updated_at: new Date().toISOString()
-      }, {
+      .upsert(activityData, {
         onConflict: 'user_id,garmin_activity_id'
       })
       .select('id')
       .single()
     
     if (activityError || !activity) {
-      console.error("❌ Failed to store activity:", activityError)
+      console.error("❌ Failed to store activity in database")
+      console.error("   Error:", activityError)
+      console.error("   Error message:", activityError?.message)
+      console.error("   Error details:", JSON.stringify(activityError, null, 2))
+      console.error("   Activity data that failed:", JSON.stringify(activityData, null, 2))
       throw new Error(`Failed to store activity: ${activityError?.message}`)
     }
     
-    console.log("✅ Activity stored with ID:", activity.id)
+    console.log("✅ Activity stored successfully in database")
+    console.log("   Database activity ID:", activity.id)
+    console.log("   Garmin activity ID:", activityId)
+    
+    // 4.5. Send push notification (async, don't wait for response)
+    try {
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+      const notifyUrl = `${supabaseUrl}/functions/v1/garmin-activity-notify`
+      
+      console.log("📱 Triggering push notification...")
+      
+      // Fire and forget - don't wait for response
+      fetch(notifyUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseKey}`,
+          'apikey': supabaseKey
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          activity_id: activity.id,
+          activity_name: activityName,
+          activity_type: activityType,
+          distance_meters: distanceMeters,
+          duration_seconds: durationSeconds
+        })
+      }).then(response => {
+        if (response.ok) {
+          console.log("✅ Push notification triggered successfully")
+        } else {
+          console.error("⚠️ Push notification failed:", response.status)
+        }
+      }).catch(err => {
+        console.error("⚠️ Failed to trigger notification (non-critical):", err)
+        // Don't fail the whole operation if notification fails
+      })
+    } catch (error) {
+      console.error("⚠️ Error triggering notification (non-critical):", error)
+      // Don't fail the whole operation if notification fails
+    }
     
     // 5. Store FIT file if available (for ultra-runner activities)
     let fitFileStored = false

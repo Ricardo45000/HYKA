@@ -2,6 +2,7 @@ import Foundation
 import Supabase
 import PostgREST
 import Auth
+import Combine
 
 /// Service to handle all Supabase data operations
 @MainActor
@@ -406,22 +407,106 @@ final class SupabaseService {
             }
         }
         
-        // Convert file data to base64 for storage
-        let base64Data = fileData.base64EncodedString()
+        // Upload GPX file to Supabase Storage instead of storing in database
+        // This prevents statement timeout errors for large files
+        let storagePath = "\(userId.uuidString)/\(finalRacePlanId.uuidString)/\(fileName)"
         
-        // Update race plan with GPX file data
-        // Note: This assumes the race_plans table has a gpx_file_name and gpx_file_data column
-        // If not, you'll need to add these columns to the table
-        let updateData = RacePlanUpdateData(
-            gpxFileName: fileName,
-            gpxFileData: base64Data
-        )
+        print("📤 Uploading GPX file to storage: \(storagePath)")
+        print("   File size: \(fileData.count) bytes (\(Double(fileData.count) / 1024 / 1024) MB)")
         
-        try await Supa.client
-            .from("race_plans")
-            .update(updateData)
-            .eq("id", value: finalRacePlanId.uuidString)
-            .execute()
+        do {
+            // Upload to Supabase Storage bucket (create bucket if it doesn't exist)
+            let fileOptions = FileOptions(
+                contentType: "application/gpx+xml",
+                upsert: true
+            )
+            
+            try await Supa.client.storage
+                .from("gpx-files")
+                .upload(path: storagePath, file: fileData, options: fileOptions)
+            
+            print("✅ GPX file uploaded to storage")
+            
+            // Get public URL for the file
+            let fileURL = try Supa.client.storage
+                .from("gpx-files")
+                .getPublicURL(path: storagePath)
+            
+            print("✅ GPX file URL: \(fileURL.absoluteString)")
+            
+            // Update race plan with GPX file metadata (not the file data)
+            let updateData = RacePlanUpdateData(
+                gpxFileName: fileName,
+                gpxFileData: fileURL.absoluteString, // Store URL instead of base64 data
+                updatedAt: ISO8601DateFormatter().string(from: Date())
+            )
+            
+            try await Supa.client
+                .from("race_plans")
+                .update(updateData)
+                .eq("id", value: finalRacePlanId.uuidString)
+                .execute()
+            
+            print("✅ GPX file metadata saved to race plan")
+            
+        } catch {
+            print("❌ Error uploading GPX file to storage: \(error)")
+            
+            // Check if it's a bucket not found error
+            let errorString = String(describing: error)
+            if errorString.contains("404") || errorString.contains("Bucket not found") {
+                print("❌ Storage bucket 'gpx-files' not found!")
+                print("   Please create the bucket by running the SQL script: create_gpx_storage_bucket.sql")
+                throw NSError(
+                    domain: "SupabaseService",
+                    code: -1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: "Storage bucket not configured. Please create the 'gpx-files' bucket in Supabase Storage (see create_gpx_storage_bucket.sql)."
+                    ]
+                )
+            }
+            
+            // For files larger than 5MB, don't try database fallback (will timeout)
+            let fileSizeMB = Double(fileData.count) / 1024 / 1024
+            if fileSizeMB > 5.0 {
+                print("❌ File too large (\(String(format: "%.1f", fileSizeMB)) MB) for database storage")
+                throw NSError(
+                    domain: "SupabaseService",
+                    code: -1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: "File is too large (\(String(format: "%.1f", fileSizeMB)) MB). Please ensure the 'gpx-files' storage bucket is created in Supabase."
+                    ]
+                )
+            }
+            
+            // Fallback: Try storing in database only for small files (< 5MB)
+            print("⚠️ Falling back to database storage (file size: \(String(format: "%.1f", fileSizeMB)) MB)...")
+            let base64Data = fileData.base64EncodedString()
+            let updateData = RacePlanUpdateData(
+                gpxFileName: fileName,
+                gpxFileData: base64Data,
+                updatedAt: ISO8601DateFormatter().string(from: Date())
+            )
+            
+            do {
+                try await Supa.client
+                    .from("race_plans")
+                    .update(updateData)
+                    .eq("id", value: finalRacePlanId.uuidString)
+                    .execute()
+                
+                print("✅ GPX file saved to database (fallback)")
+            } catch {
+                print("❌ Database fallback also failed: \(error)")
+                throw NSError(
+                    domain: "SupabaseService",
+                    code: -1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: "Failed to save GPX file. Please ensure the 'gpx-files' storage bucket is created in Supabase Storage."
+                    ]
+                )
+            }
+        }
         
         try await generateRaceContent(for: finalRacePlanId, userId: userId, fileName: fileName, gpxData: fileData)
         
@@ -444,7 +529,7 @@ final class SupabaseService {
         print("✅ Race plan title updated for \(racePlanId.uuidString)")
     }
     
-    private static func makeTrackPoints(from rawPoints: [GPXTrackPoint]) -> [TrackPoint] {
+    static func makeTrackPoints(from rawPoints: [GPXTrackPoint]) -> [TrackPoint] {
         var trackPoints: [TrackPoint] = []
         var cumulativeDistance: Double = 0
         for raw in rawPoints {
@@ -714,8 +799,19 @@ final class SupabaseService {
         }
     }
     
-    /// Fetch race plans for a user
+    /// Fetch race plans for a user (with offline caching)
     static func fetchRacePlans(userId: UUID) async throws -> [RacePlanSummary] {
+        // Check if offline - return cached data
+        if !NetworkMonitor.shared.isConnected {
+            print("📦 Offline: Loading race plans from cache")
+            if let cached = DataCache.shared.loadArray(RacePlanSummary.self, key: .racePlans, userId: userId) {
+                print("✅ Loaded \(cached.count) race plans from cache")
+                return cached
+            }
+            throw NSError(domain: "SupabaseService", code: -1, userInfo: [NSLocalizedDescriptionKey: "No internet connection and no cached data available"])
+        }
+        
+        // Online - fetch from Supabase
         let response = try await Supa.client
             .from("race_plans")
             .select()
@@ -734,13 +830,18 @@ final class SupabaseService {
         }
         
         guard let dataArray = dataArray else {
+            // If fetch fails but we have cache, return cache
+            if let cached = DataCache.shared.loadArray(RacePlanSummary.self, key: .racePlans, userId: userId) {
+                print("⚠️ Fetch failed, returning cached data")
+                return cached
+            }
             return []
         }
         
         let isoFormatter = ISO8601DateFormatter()
         isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         
-        return dataArray.compactMap { dict in
+        let plans = dataArray.compactMap { dict -> RacePlanSummary? in
             guard let idString = dict["id"] as? String,
                   let id = UUID(uuidString: idString),
                   let title = dict["title"] as? String,
@@ -756,10 +857,30 @@ final class SupabaseService {
             
             return RacePlanSummary(id: id, title: title, createdAt: createdAt, updatedAt: updatedAtDate ?? createdAt)
         }
+        
+        // Cache the fetched data
+        DataCache.shared.saveArray(plans, key: .racePlans, userId: userId)
+        print("✅ Fetched and cached \(plans.count) race plans")
+        
+        return plans
     }
     
-    /// Fetch race plan segments for a race plan
+    /// Fetch race plan segments for a race plan (with offline caching)
     static func fetchRacePlanSegments(racePlanId: UUID) async throws -> [RacePlanSegment] {
+        // Get user_id from race plan to use for cache key
+        // For now, we'll use racePlanId as additionalId
+        let userId: UUID? = nil // We'll need to pass this or fetch it
+        
+        // Check if offline - return cached data
+        if !NetworkMonitor.shared.isConnected {
+            print("📦 Offline: Loading race plan segments from cache")
+            if let cached = DataCache.shared.loadArray(RacePlanSegment.self, key: .racePlanSegments, userId: userId, additionalId: racePlanId) {
+                print("✅ Loaded \(cached.count) race plan segments from cache")
+                return cached
+            }
+            throw NSError(domain: "SupabaseService", code: -1, userInfo: [NSLocalizedDescriptionKey: "No internet connection and no cached data available"])
+        }
+        
         let response = try await Supa.client
             .from("race_plan_segments")
             .select()
@@ -776,10 +897,15 @@ final class SupabaseService {
         }
         
         guard let dataArray = dataArray else {
+            // If fetch fails but we have cache, return cache
+            if let cached = DataCache.shared.loadArray(RacePlanSegment.self, key: .racePlanSegments, userId: userId, additionalId: racePlanId) {
+                print("⚠️ Fetch failed, returning cached data")
+                return cached
+            }
             return []
         }
         
-        return dataArray.compactMap { dict in
+        let segments = dataArray.compactMap { dict -> RacePlanSegment? in
             guard let idString = dict["id"] as? String,
                   let id = UUID(uuidString: idString),
                   let distanceM = dict["distance_m"] as? Double,
@@ -817,6 +943,12 @@ final class SupabaseService {
                 averageHeartRate: averageHeartRate
             )
         }
+        
+        // Cache the fetched segments
+        DataCache.shared.saveArray(segments, key: .racePlanSegments, userId: userId, additionalId: racePlanId)
+        print("✅ Fetched and cached \(segments.count) race plan segments")
+        
+        return segments
     }
     
     /// Fetch fuel events for a race plan
@@ -905,6 +1037,16 @@ final class SupabaseService {
     
     /// Fetch fuel types for a user (defaults and custom entries stored in Supabase)
     static func fetchFuelTypes(userId: UUID) async throws -> [SupabaseFuelType] {
+        // Check if offline - return cached data
+        if !NetworkMonitor.shared.isConnected {
+            print("📦 Offline: Loading fuel types from cache")
+            if let cached = DataCache.shared.loadArray(SupabaseFuelType.self, key: .fuelTypes, userId: userId) {
+                print("✅ Loaded \(cached.count) fuel types from cache")
+                return cached
+            }
+            throw NSError(domain: "SupabaseService", code: -1, userInfo: [NSLocalizedDescriptionKey: "No internet connection and no cached data available"])
+        }
+        
         let response = try await Supa.client
             .from("fuel_types")
             .select()
@@ -921,10 +1063,15 @@ final class SupabaseService {
         }
         
         guard let dataArray = dataArray else {
+            // If fetch fails but we have cache, return cache
+            if let cached = DataCache.shared.loadArray(SupabaseFuelType.self, key: .fuelTypes, userId: userId) {
+                print("⚠️ Fetch failed, returning cached fuel types")
+                return cached
+            }
             return []
         }
         
-        return dataArray.compactMap { dict in
+        let fuelTypes = dataArray.compactMap { dict -> SupabaseFuelType? in
             guard let idString = dict["id"] as? String,
                   let id = UUID(uuidString: idString),
                   let name = dict["name"] as? String,
@@ -946,21 +1093,55 @@ final class SupabaseService {
                 isCustom: isCustom
             )
         }
+        
+        // If fetch returned empty, check if we have cached data to return instead
+        if fuelTypes.isEmpty {
+            if let cached = DataCache.shared.loadArray(SupabaseFuelType.self, key: .fuelTypes, userId: userId), !cached.isEmpty {
+                print("⚠️ Fetch returned empty, returning \(cached.count) cached fuel types")
+                return cached
+            }
+            print("⚠️ Fetch returned empty and no cached fuel types available")
+            return []
+        }
+        
+        // Cache the fetched fuel types (only if we got data)
+        DataCache.shared.saveArray(fuelTypes, key: .fuelTypes, userId: userId)
+        print("✅ Fetched and cached \(fuelTypes.count) fuel types")
+        
+        return fuelTypes
     }
     
     static func ensureDefaultFuelTypes(userId: UUID) async throws {
+        print("🔧 Ensuring default fuel types exist for user: \(userId)")
         let existingFuelTypes = try await fetchFuelTypes(userId: userId)
+        print("📊 Found \(existingFuelTypes.count) existing fuel types")
         let existingNames = Set(existingFuelTypes.map { $0.name.lowercased() })
-        for defaultFuel in defaultFuelCatalog where !existingNames.contains(defaultFuel.name.lowercased()) {
-            _ = try await addFuelType(
-                userId: userId,
-                name: defaultFuel.name,
-                category: defaultFuel.category,
-                carbs: defaultFuel.carbs,
-                sodium: defaultFuel.sodium,
-                isCustom: false
-            )
+        print("📋 Existing fuel type names: \(existingNames)")
+        
+        var createdCount = 0
+        for defaultFuel in defaultFuelCatalog {
+            if !existingNames.contains(defaultFuel.name.lowercased()) {
+                print("➕ Creating default fuel type: \(defaultFuel.name)")
+                do {
+                    _ = try await addFuelType(
+                        userId: userId,
+                        name: defaultFuel.name,
+                        category: defaultFuel.category,
+                        carbs: defaultFuel.carbs,
+                        sodium: defaultFuel.sodium,
+                        isCustom: false
+                    )
+                    createdCount += 1
+                    print("✅ Successfully created: \(defaultFuel.name)")
+                } catch {
+                    print("❌ Failed to create fuel type \(defaultFuel.name): \(error)")
+                    // Continue with other fuel types even if one fails
+                }
+            } else {
+                print("ℹ️ Fuel type already exists: \(defaultFuel.name)")
+            }
         }
+        print("✅ Finished ensuring default fuel types. Created \(createdCount) new fuel types.")
     }
     
     static func addFuelType(userId: UUID, name: String, category: String, carbs: Int, sodium: Int, isCustom: Bool = true) async throws -> UUID {
@@ -1429,6 +1610,16 @@ final class SupabaseService {
     static func fetchWorkouts(userId: UUID) async throws -> [WorkoutSummary] {
         print("📊 fetchWorkouts: Fetching activities for user \(userId.uuidString)")
         
+        // Check if offline - return cached data
+        if !NetworkMonitor.shared.isConnected {
+            print("📦 Offline: Loading workouts from cache")
+            if let cached = DataCache.shared.loadArray(WorkoutSummary.self, key: .workouts, userId: userId) {
+                print("✅ Loaded \(cached.count) workouts from cache")
+                return cached
+            }
+            throw NSError(domain: "SupabaseService", code: -1, userInfo: [NSLocalizedDescriptionKey: "No internet connection and no cached data available"])
+        }
+        
         // Use unified_activities view to get activities from all providers (including Garmin)
         do {
             let response = try await Supa.client
@@ -1514,6 +1705,11 @@ final class SupabaseService {
             guard let json = try? JSONSerialization.jsonObject(with: response.data),
                   let list = json as? [[String: Any]] else {
                 print("⚠️ fetchWorkouts: Fallback also failed")
+                // If fetch fails but we have cache, return cache
+                if let cached = DataCache.shared.loadArray(WorkoutSummary.self, key: .workouts, userId: userId) {
+                    print("⚠️ Returning cached data after fallback failure")
+                    return cached
+                }
                 return []
             }
             
@@ -1522,7 +1718,7 @@ final class SupabaseService {
             let formatter = ISO8601DateFormatter()
             formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
             
-            return list.compactMap { dict in
+            let fallbackWorkouts = list.compactMap { dict -> WorkoutSummary? in
                 guard let idString = dict["id"] as? String, let id = UUID(uuidString: idString) else { return nil }
                 let distance = dict["distance_m"] as? Double
                 let elapsed = dict["elapsed_seconds"] as? Int
@@ -1545,6 +1741,12 @@ final class SupabaseService {
                     startTime: startTime
                 )
             }
+            
+            // Cache the fallback workouts too
+            DataCache.shared.saveArray(fallbackWorkouts, key: .workouts, userId: userId)
+            print("✅ Cached \(fallbackWorkouts.count) fallback workouts")
+            
+            return fallbackWorkouts
         }
     }
     
@@ -1877,11 +2079,41 @@ final class SupabaseService {
             .eq("id", value: racePlanId.uuidString)
             .single()
             .execute()
+        
         guard let json = try? JSONSerialization.jsonObject(with: response.data, options: []) as? [String: Any],
-              let base64 = json["gpx_file_data"] as? String,
-              let data = Data(base64Encoded: base64) else {
+              let gpxFileData = json["gpx_file_data"] as? String else {
             return []
         }
+        
+        let data: Data
+        
+        // Check if it's a URL (new storage format) or base64 (old format)
+        if gpxFileData.hasPrefix("http://") || gpxFileData.hasPrefix("https://") {
+            // Download from Supabase Storage
+            print("📥 Downloading GPX file from storage: \(gpxFileData)")
+            guard let url = URL(string: gpxFileData) else {
+                print("❌ Invalid GPX file URL")
+                return []
+            }
+            
+            do {
+                let (fileData, _) = try await URLSession.shared.data(from: url)
+                data = fileData
+                print("✅ GPX file downloaded: \(data.count) bytes")
+            } catch {
+                print("❌ Error downloading GPX file: \(error)")
+                return []
+            }
+        } else {
+            // Decode base64 (backwards compatibility with old format)
+            guard let decodedData = Data(base64Encoded: gpxFileData) else {
+                print("❌ Invalid base64 GPX file data")
+                return []
+            }
+            data = decodedData
+            print("✅ GPX file decoded from base64: \(data.count) bytes")
+        }
+        
         let parser = GPXParser()
         let rawPoints = parser.parse(data: data)
         return makeTrackPoints(from: rawPoints)
@@ -2127,7 +2359,7 @@ struct HealthMetricsData: Codable {
     }
 }
 
-struct WorkoutSummary {
+struct WorkoutSummary: Codable {
     let id: UUID
     let distanceM: Double?
     let elapsedSeconds: Int?
@@ -2177,7 +2409,7 @@ struct RacePlanResponse: Codable {
     }
 }
 
-struct RacePlanSummary: Identifiable {
+struct RacePlanSummary: Identifiable, Codable {
     let id: UUID
     let title: String
     let createdAt: Date
@@ -2262,7 +2494,7 @@ struct TrainingDataCodable: Codable {
     }
 }
 
-struct RacePlanSegment: Identifiable {
+struct RacePlanSegment: Identifiable, Codable {
     let id: UUID
     let racePlanId: UUID
     let index: Int
@@ -2285,7 +2517,7 @@ struct SupabaseFuelEvent: Identifiable {
     let notes: String?
 }
 
-struct SupabaseFuelType: Identifiable {
+struct SupabaseFuelType: Identifiable, Codable {
     let id: UUID
     let userId: UUID
     let name: String
@@ -2320,6 +2552,436 @@ struct FuelTypeUpdateData: Codable {
     let sodium: Int
 }
 
+// MARK: - Garmin Activities & Health Data
+
+/// Garmin Activity model for reading from Supabase database
+struct GarminActivityFromDB: Identifiable, Codable {
+    let id: UUID
+    let userId: UUID
+    let garminActivityId: String
+    let activityType: String?
+    let activityName: String?
+    let startTimeSeconds: Int64
+    let durationSeconds: Int?
+    let distanceMeters: Double?
+    let elevationGainMeters: Int?
+    let elevationLossMeters: Int?
+    let avgHeartRate: Int?
+    let maxHeartRate: Int?
+    let avgPaceSecondsPerKm: Double?
+    let calories: Int?
+    let deviceName: String?
+    let createdAt: Date?
+    let updatedAt: Date?
+    
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userId = "user_id"
+        case garminActivityId = "garmin_activity_id"
+        case activityType = "activity_type"
+        case activityName = "activity_name"
+        case startTimeSeconds = "start_time_seconds"
+        case durationSeconds = "duration_seconds"
+        case distanceMeters = "distance_meters"
+        case elevationGainMeters = "elevation_gain_meters"
+        case elevationLossMeters = "elevation_loss_meters"
+        case avgHeartRate = "avg_heart_rate"
+        case maxHeartRate = "max_heart_rate"
+        case avgPaceSecondsPerKm = "avg_pace_seconds_per_km"
+        case calories
+        case deviceName = "device_name"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+    
+    var startDate: Date {
+        Date(timeIntervalSince1970: TimeInterval(startTimeSeconds))
+    }
+    
+    var distanceKm: Double {
+        (distanceMeters ?? 0) / 1000.0
+    }
+    
+    var durationHours: Double {
+        Double(durationSeconds ?? 0) / 3600.0
+    }
+}
+
+/// Garmin Activity Sample (GPS track point)
+struct GarminActivitySample: Identifiable, Codable {
+    let id: UUID
+    let activityId: UUID
+    let timestampSeconds: Int64
+    let latitude: Double?
+    let longitude: Double?
+    let elevationMeters: Double?
+    let heartRate: Int?
+    let paceSecondsPerKm: Double?
+    
+    enum CodingKeys: String, CodingKey {
+        case id
+        case activityId = "activity_id"
+        case timestampSeconds = "timestamp_seconds"
+        case latitude
+        case longitude
+        case elevationMeters = "elevation_meters"
+        case heartRate = "heart_rate"
+        case paceSecondsPerKm = "pace_seconds_per_km"
+    }
+    
+    var timestamp: Date {
+        Date(timeIntervalSince1970: TimeInterval(timestampSeconds))
+    }
+}
+
+/// Garmin Health Metrics model
+struct GarminHealthMetrics: Identifiable, Codable {
+    let id: UUID
+    let userId: UUID
+    let garminUserId: String
+    let timestamp: Date
+    let fitnessAge: Int?
+    let vo2Max: Double?
+    let rawData: [String: Any]?
+    
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userId = "user_id"
+        case garminUserId = "garmin_user_id"
+        case timestamp
+        case fitnessAge = "fitness_age"
+        case vo2Max = "vo2_max"
+        case rawData = "raw_data"
+    }
+    
+    // Custom initializer for manual creation
+    init(
+        id: UUID,
+        userId: UUID,
+        garminUserId: String,
+        timestamp: Date,
+        fitnessAge: Int?,
+        vo2Max: Double?,
+        rawData: [String: Any]?
+    ) {
+        self.id = id
+        self.userId = userId
+        self.garminUserId = garminUserId
+        self.timestamp = timestamp
+        self.fitnessAge = fitnessAge
+        self.vo2Max = vo2Max
+        self.rawData = rawData
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        userId = try container.decode(UUID.self, forKey: .userId)
+        garminUserId = try container.decode(String.self, forKey: .garminUserId)
+        
+        let timestampString = try container.decode(String.self, forKey: .timestamp)
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        timestamp = formatter.date(from: timestampString) ?? Date()
+        
+        fitnessAge = try container.decodeIfPresent(Int.self, forKey: .fitnessAge)
+        vo2Max = try container.decodeIfPresent(Double.self, forKey: .vo2Max)
+        
+        // Decode raw_data as JSON
+        if let rawDataString = try? container.decode(String.self, forKey: .rawData),
+           let data = rawDataString.data(using: .utf8),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            rawData = json
+        } else {
+            rawData = nil
+        }
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(userId, forKey: .userId)
+        try container.encode(garminUserId, forKey: .garminUserId)
+        
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        try container.encode(formatter.string(from: timestamp), forKey: .timestamp)
+        
+        try container.encodeIfPresent(fitnessAge, forKey: .fitnessAge)
+        try container.encodeIfPresent(vo2Max, forKey: .vo2Max)
+        
+        if let rawData = rawData,
+           let jsonData = try? JSONSerialization.data(withJSONObject: rawData),
+           let jsonString = String(data: jsonData, encoding: .utf8) {
+            try container.encode(jsonString, forKey: .rawData)
+        }
+    }
+}
+
+extension SupabaseService {
+    // MARK: - Garmin Activities
+    
+    /// Fetch Garmin activities from Supabase for a date range (with offline caching)
+    static func fetchGarminActivities(
+        userId: UUID,
+        startDate: Date? = nil,
+        endDate: Date? = nil,
+        limit: Int = 100
+    ) async throws -> [GarminActivityFromDB] {
+        // Check if offline - return cached data
+        if !NetworkMonitor.shared.isConnected {
+            print("📦 Offline: Loading Garmin activities from cache")
+            if let cached = DataCache.shared.loadArray(GarminActivityFromDB.self, key: .garminActivities, userId: userId) {
+                // Filter by date range if provided
+                var filtered = cached
+                if let startDate = startDate {
+                    let startSeconds = Int(startDate.timeIntervalSince1970)
+                    filtered = filtered.filter { $0.startTimeSeconds >= startSeconds }
+                }
+                if let endDate = endDate {
+                    let endSeconds = Int(endDate.timeIntervalSince1970)
+                    filtered = filtered.filter { $0.startTimeSeconds <= endSeconds }
+                }
+                print("✅ Loaded \(filtered.count) Garmin activities from cache")
+                return Array(filtered.prefix(limit))
+            }
+            throw NSError(domain: "SupabaseService", code: -1, userInfo: [NSLocalizedDescriptionKey: "No internet connection and no cached data available"])
+        }
+        
+        var query = Supa.client
+            .from("garmin_activities")
+            .select("*")
+            .eq("user_id", value: userId.uuidString)
+        
+        // Apply filters before ordering/limiting
+        if let startDate = startDate {
+            let startSeconds = Int(startDate.timeIntervalSince1970)
+            query = query.gte("start_time_seconds", value: startSeconds)
+        }
+        
+        if let endDate = endDate {
+            let endSeconds = Int(endDate.timeIntervalSince1970)
+            query = query.lte("start_time_seconds", value: endSeconds)
+        }
+        
+        // Apply ordering and limit after filters
+        let response = try await query
+            .order("start_time_seconds", ascending: false)
+            .limit(limit)
+            .execute()
+        
+        // Parse response
+        guard let dataArray = try? JSONSerialization.jsonObject(with: response.data) as? [[String: Any]] else {
+            // If fetch fails but we have cache, return cache
+            if let cached = DataCache.shared.loadArray(GarminActivityFromDB.self, key: .garminActivities, userId: userId) {
+                print("⚠️ Fetch failed, returning cached data")
+                return cached
+            }
+            return []
+        }
+        
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        
+        let activities = dataArray.compactMap { dict -> GarminActivityFromDB? in
+            guard let jsonData = try? JSONSerialization.data(withJSONObject: dict) else {
+                return nil
+            }
+            return try? decoder.decode(GarminActivityFromDB.self, from: jsonData)
+        }
+        
+        // Cache the fetched data
+        DataCache.shared.saveArray(activities, key: .garminActivities, userId: userId)
+        print("✅ Fetched and cached \(activities.count) Garmin activities")
+        
+        return activities
+    }
+    
+    /// Fetch a single Garmin activity by ID
+    static func fetchGarminActivity(activityId: UUID) async throws -> GarminActivityFromDB? {
+        let response = try await Supa.client
+            .from("garmin_activities")
+            .select("*")
+            .eq("id", value: activityId.uuidString)
+            .single()
+            .execute()
+        
+        guard let dict = try? JSONSerialization.jsonObject(with: response.data) as? [String: Any],
+              let jsonData = try? JSONSerialization.data(withJSONObject: dict) else {
+            return nil
+        }
+        
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try? decoder.decode(GarminActivityFromDB.self, from: jsonData)
+    }
+    
+    /// Fetch GPS samples (track points) for a Garmin activity
+    static func fetchGarminActivitySamples(activityId: UUID) async throws -> [GarminActivitySample] {
+        let response = try await Supa.client
+            .from("garmin_activity_samples")
+            .select("*")
+            .eq("activity_id", value: activityId.uuidString)
+            .order("timestamp_seconds", ascending: true)
+            .execute()
+        
+        guard let dataArray = try? JSONSerialization.jsonObject(with: response.data) as? [[String: Any]] else {
+            return []
+        }
+        
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        
+        return dataArray.compactMap { dict in
+            guard let jsonData = try? JSONSerialization.data(withJSONObject: dict) else {
+                return nil
+            }
+            return try? decoder.decode(GarminActivitySample.self, from: jsonData)
+        }
+    }
+    
+    // MARK: - Garmin Health Metrics
+    
+    /// Fetch Garmin health metrics from Supabase for a date range
+    static func fetchGarminHealthMetrics(
+        userId: UUID,
+        startDate: Date,
+        endDate: Date
+    ) async throws -> [GarminHealthMetrics] {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        
+        let response = try await Supa.client
+            .from("garmin_health_metrics")
+            .select("*")
+            .eq("user_id", value: userId.uuidString)
+            .gte("timestamp", value: formatter.string(from: startDate))
+            .lte("timestamp", value: formatter.string(from: endDate))
+            .order("timestamp", ascending: false)
+            .execute()
+        
+        guard let dataArray = try? JSONSerialization.jsonObject(with: response.data) as? [[String: Any]] else {
+            return []
+        }
+        
+        // Manual decoding due to raw_data JSONB field
+        return dataArray.compactMap { dict -> GarminHealthMetrics? in
+            guard let idString = dict["id"] as? String,
+                  let id = UUID(uuidString: idString),
+                  let userIdString = dict["user_id"] as? String,
+                  let userId = UUID(uuidString: userIdString),
+                  let garminUserId = dict["garmin_user_id"] as? String,
+                  let timestampString = dict["timestamp"] as? String else {
+                return nil
+            }
+            
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            guard let timestamp = formatter.date(from: timestampString) else {
+                return nil
+            }
+            
+            let fitnessAge = dict["fitness_age"] as? Int
+            let vo2Max = dict["vo2_max"] as? Double
+            
+            // Parse raw_data (could be JSON string or already a dict)
+            var rawData: [String: Any]? = nil
+            if let rawDataValue = dict["raw_data"] {
+                if let dictValue = rawDataValue as? [String: Any] {
+                    rawData = dictValue
+                } else if let stringValue = rawDataValue as? String,
+                          let data = stringValue.data(using: .utf8),
+                          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    rawData = json
+                }
+            }
+            
+            return GarminHealthMetrics(
+                id: id,
+                userId: userId,
+                garminUserId: garminUserId,
+                timestamp: timestamp,
+                fitnessAge: fitnessAge,
+                vo2Max: vo2Max,
+                rawData: rawData
+            )
+        }
+    }
+    
+    /// Fetch latest Garmin health metrics
+    static func fetchLatestGarminHealthMetrics(userId: UUID) async throws -> GarminHealthMetrics? {
+        let response = try await Supa.client
+            .from("garmin_health_metrics")
+            .select("*")
+            .eq("user_id", value: userId.uuidString)
+            .order("timestamp", ascending: false)
+            .limit(1)
+            .execute()
+        
+        guard let dataArray = try? JSONSerialization.jsonObject(with: response.data) as? [[String: Any]],
+              let dict = dataArray.first else {
+            return nil
+        }
+        
+        // Same parsing logic as above
+        guard let idString = dict["id"] as? String,
+              let id = UUID(uuidString: idString),
+              let userIdString = dict["user_id"] as? String,
+              let userId = UUID(uuidString: userIdString),
+              let garminUserId = dict["garmin_user_id"] as? String,
+              let timestampString = dict["timestamp"] as? String else {
+            return nil
+        }
+        
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let timestamp = formatter.date(from: timestampString) else {
+            return nil
+        }
+        
+        let fitnessAge = dict["fitness_age"] as? Int
+        let vo2Max = dict["vo2_max"] as? Double
+        
+        var rawData: [String: Any]? = nil
+        if let rawDataValue = dict["raw_data"] {
+            if let dictValue = rawDataValue as? [String: Any] {
+                rawData = dictValue
+            } else if let stringValue = rawDataValue as? String,
+                      let data = stringValue.data(using: .utf8),
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                rawData = json
+            }
+        }
+        
+        return GarminHealthMetrics(
+            id: id,
+            userId: userId,
+            garminUserId: garminUserId,
+            timestamp: timestamp,
+            fitnessAge: fitnessAge,
+            vo2Max: vo2Max,
+            rawData: rawData
+        )
+    }
+    
+    /// Check if user has Garmin connected
+    static func hasGarminConnection(userId: UUID) async throws -> Bool {
+        let response = try await Supa.client
+            .from("garmin_connections")
+            .select("id")
+            .eq("user_id", value: userId.uuidString)
+            .eq("permission_revoked", value: false)
+            .limit(1)
+            .execute()
+        
+        guard let dataArray = try? JSONSerialization.jsonObject(with: response.data) as? [[String: Any]] else {
+            return false
+        }
+        
+        return !dataArray.isEmpty
+    }
+}
+
 struct AidStationServicePayload: Codable {
     let type: String
     let isAvailable: Bool
@@ -2339,7 +3001,7 @@ struct AidStationServicePayload: Codable {
     }
 }
 
-struct TrackPoint {
+struct TrackPoint: Codable {
     let lat: Double
     let lon: Double
     let ele: Double
@@ -2347,7 +3009,7 @@ struct TrackPoint {
     let hr: Int?
 }
 
-struct AidStationSegmentMetrics {
+struct AidStationSegmentMetrics: Codable {
     let segmentDistanceM: Double
     let elevationGainM: Double
     let elevationLossM: Double

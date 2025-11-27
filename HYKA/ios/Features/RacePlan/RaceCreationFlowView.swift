@@ -32,6 +32,8 @@ struct RaceCreationFlowView: View {
     @State private var showErrorAlert = false
     @State private var showValidationAlert = false
     @State private var isUploadingGPX = false
+    @State private var gpxFileName: String? = nil
+    @State private var gpxFileData: Data? = nil
     private let defaultPaceSecondsPerKm = 300
     
     var body: some View {
@@ -50,9 +52,10 @@ struct RaceCreationFlowView: View {
                     UploadGPXView(
                         onNext: handleUploadContinue,
                         onSkip: handleUploadContinue,
-                        onGPXImported: { id, distance in
-                            racePlanId = id
-                            updateFinishDistance(distance)
+                        onGPXImported: { fileName, fileData, distanceKm in
+                            gpxFileName = fileName
+                            gpxFileData = fileData
+                            updateFinishDistance(distanceKm)
                             isUploadingGPX = false
                         },
                         onUploadStatusChange: { isUploadingGPX = $0 },
@@ -124,38 +127,60 @@ struct RaceCreationFlowView: View {
     
     private func handleUploadContinue() {
         guard !isUploadingGPX else { return }
-        guard racePlanId != nil else {
-            showValidationAlert = true
-            return
-        }
+        // Allow continuing even if GPX not uploaded (optional step)
         advance(to: .details)
     }
     
     private func finishCreation() {
-        guard let racePlanId else {
-            showValidationAlert = true
-            return
-        }
         Task {
             do {
                 guard let userId = await resolveUserId() else {
                     throw NSError(domain: "RaceCreationFlow", code: -1, userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])
                 }
                 await MainActor.run { isSaving = true }
-                try await SupabaseService.updateRacePlanTitle(racePlanId: racePlanId, title: raceDetails.name)
+                
                 let orderedStations = aidStations.sorted { $0.distance < $1.distance }
                 guard orderedStations.count >= 2 else {
                     throw NSError(domain: "RaceCreationFlow", code: -2, userInfo: [NSLocalizedDescriptionKey: "Add at least a start and finish station"])
                 }
-                let trackPoints = try await SupabaseService.fetchRacePlanTrackPoints(racePlanId: racePlanId)
+                
+                // 1. Create the race plan
+                let createdRacePlanId = try await SupabaseService.saveRacePlan(
+                    userId: userId,
+                    raceDetails: raceDetails,
+                    aidStations: orderedStations,
+                    preferences: preferences
+                )
+                
+                // 2. Save GPX file if available
+                if let fileName = gpxFileName, let fileData = gpxFileData {
+                    _ = try await SupabaseService.saveGPXFile(
+                        userId: userId,
+                        racePlanId: createdRacePlanId,
+                        fileName: fileName,
+                        fileData: fileData
+                    )
+                    print("✅ GPX file saved to database")
+                }
+                
+                // 3. Update race plan title
+                try await SupabaseService.updateRacePlanTitle(racePlanId: createdRacePlanId, title: raceDetails.name)
+                
+                // 4. Fetch track points and build metrics
+                let trackPoints = try await SupabaseService.fetchRacePlanTrackPoints(racePlanId: createdRacePlanId)
                 let metrics = buildSegmentMetrics(for: orderedStations, using: trackPoints)
+                
+                // 5. Update aid stations with metrics
                 try await SupabaseService.updateAidStations(
-                    racePlanId: racePlanId,
+                    racePlanId: createdRacePlanId,
                     aidStations: orderedStations,
                     segmentMetrics: metrics,
                     paceSecondsPerKm: Double(defaultPaceSecondsPerKm)
                 )
+                
+                // 6. Ensure default fuel types exist
                 try await SupabaseService.ensureDefaultFuelTypes(userId: userId)
+                
                 let metadata = RacePlanMetadata(
                     raceDate: raceDetails.date,
                     startTime: raceDetails.startTime,
@@ -163,9 +188,10 @@ struct RaceCreationFlowView: View {
                     distance: orderedStations.last?.distance,
                     notes: nil
                 )
+                
                 await MainActor.run {
                     isSaving = false
-                    onComplete(racePlanId, metadata)
+                    onComplete(createdRacePlanId, metadata)
                     dismiss()
                 }
             } catch {

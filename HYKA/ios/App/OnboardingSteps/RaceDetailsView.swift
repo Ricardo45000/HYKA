@@ -15,11 +15,6 @@ struct RaceDetailsView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            OnboardingProgress(currentStep: 7, totalSteps: 8, showSignOut: true) {
-                showSignOutAlert = true
-            }
-            .environmentObject(session)
-            
             ScrollView {
                 VStack(spacing: HYKATheme.spacingXXL) {
                     VStack(spacing: HYKATheme.spacingS) {

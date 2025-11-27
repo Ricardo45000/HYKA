@@ -10,8 +10,6 @@ struct ConnectDevicesView: View {
     @EnvironmentObject var session: SessionManager
     @StateObject private var oauthManager: DeviceOAuthManager
     @State private var connectedDevices: Set<String> = []
-    @State private var showErrorAlert = false
-    @State private var errorMessage = ""
     @State private var isLoading = false
     @State private var showDisconnectAlert = false
     @State private var devicePendingDisconnect: String? = nil
@@ -191,6 +189,7 @@ struct ConnectDevicesView: View {
                 }
             }
             .background(HYKATheme.backgroundColor)
+            .withErrorDisplay()
         }
         .onAppear {
             // Update OAuth manager with current session
@@ -218,11 +217,6 @@ struct ConnectDevicesView: View {
             } else {
                 Text("")
             }
-        }
-        .alert("Connection Error", isPresented: $showErrorAlert) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(errorMessage)
         }
         .alert("Sign Out", isPresented: $showSignOutAlert) {
             Button("Cancel", role: .cancel) { }
@@ -285,8 +279,7 @@ struct ConnectDevicesView: View {
             // Get root view controller for OAuth presentation
             guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                   let rootViewController = windowScene.windows.first?.rootViewController else {
-                errorMessage = "Could not find view controller for OAuth"
-                showErrorAlert = true
+                ErrorManager.shared.showError(title: "Connection Failed", message: "Could not find view controller for OAuth")
                 isLoading = false
                 return
             }
@@ -299,14 +292,12 @@ struct ConnectDevicesView: View {
                 print("✅ Successfully connected to \(deviceName)")
                 
             } catch {
-                if case DeviceOAuthError.notImplemented(let message) = error {
-                    errorMessage = "\(deviceName) connection not yet available. \(message)"
-                } else {
-                    errorMessage = "Failed to connect to \(deviceName): \(error.localizedDescription)"
-                }
-                showErrorAlert = true
                 print("❌ Error connecting to \(deviceName): \(error)")
-                ErrorManager.shared.showError(error, title: "Connection Failed")
+                if case DeviceOAuthError.notImplemented(let message) = error {
+                    ErrorManager.shared.showError(title: "Connection Not Available", message: "\(deviceName) connection not yet available. \(message)")
+                } else {
+                    ErrorManager.shared.showError(error, title: "Connection Failed")
+                }
             }
             
             isLoading = false
@@ -328,8 +319,7 @@ struct ConnectDevicesView: View {
         } catch {
             print("⚠️ Error disconnecting \(deviceName): \(error)")
             await MainActor.run {
-                errorMessage = "Failed to disconnect \(deviceName). Please try again."
-                showErrorAlert = true
+                ErrorManager.shared.showError(error, title: "Failed to Disconnect")
             }
         }
     }
@@ -378,6 +368,7 @@ struct ConnectDevicesView: View {
                 print("✅ Loaded existing connections: \(connectedSet)")
             }
         } catch {
+            // Non-critical error - just log, don't show to user
             print("⚠️ Error loading existing connections: \(error)")
         }
     }

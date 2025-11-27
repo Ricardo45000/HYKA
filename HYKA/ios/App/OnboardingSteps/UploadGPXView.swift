@@ -5,14 +5,14 @@ import Auth
 struct UploadGPXView: View {
     let onNext: () -> Void
     let onSkip: () -> Void
-    let onGPXImported: ((UUID, Double) -> Void)?
+    let onGPXImported: ((String, Data, Double) -> Void)? // fileName, fileData, distanceKm
     let onUploadStatusChange: ((Bool) -> Void)?
     let isContinueDisabled: Bool
     
     init(
         onNext: @escaping () -> Void,
         onSkip: @escaping () -> Void,
-        onGPXImported: ((UUID, Double) -> Void)? = nil,
+        onGPXImported: ((String, Data, Double) -> Void)? = nil,
         onUploadStatusChange: ((Bool) -> Void)? = nil,
         isContinueDisabled: Bool = false
     ) {
@@ -218,31 +218,17 @@ struct UploadGPXView: View {
                 throw NSError(domain: "GPXReadError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unable to read GPX file"])
             }
             
-            // Get user ID
-            guard let userId = session.currentUser?.id ?? (session.isAuthenticated ? UUID(uuidString: UserDefaults.standard.string(forKey: "hyka.user.id") ?? "") : nil) else {
-                print("⚠️ No user ID available for saving GPX file")
-                ErrorManager.shared.showError(title: "Save Failed", message: "Please sign in to save GPX files")
-                await MainActor.run {
-                    isUploading = false
-                    onUploadStatusChange?(false)
-                }
-                return
-            }
-            
-            // Save GPX file to database
-            let racePlanId = try await SupabaseService.saveGPXFile(
-                userId: userId,
-                racePlanId: nil, // Create new race plan for onboarding
-                fileName: selectedFileName,
-                fileData: fileData
-            )
-            
-            let trackPoints = try await SupabaseService.fetchRacePlanTrackPoints(racePlanId: racePlanId)
+            // Parse GPX file locally to calculate distance (without saving to database)
+            let parser = GPXParser()
+            let gpxPoints = parser.parse(data: fileData)
+            let trackPoints = SupabaseService.makeTrackPoints(from: gpxPoints)
             let totalDistanceMeters = trackPoints.last?.distFromStart ?? 0
             let totalDistanceKm = totalDistanceMeters / 1000.0
-            print("✅ GPX file saved to database with race plan ID: \(racePlanId)")
+            
+            print("✅ GPX file parsed locally. Distance: \(totalDistanceKm) km")
             await MainActor.run {
-                onGPXImported?(racePlanId, totalDistanceKm)
+                // Pass GPX data to parent (will be saved at the end of onboarding)
+                onGPXImported?(selectedFileName, fileData, totalDistanceKm)
                 isUploading = false
                 onUploadStatusChange?(false)
             }

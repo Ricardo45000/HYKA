@@ -13,11 +13,6 @@ struct StrategyPreferencesView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            OnboardingProgress(currentStep: 9, totalSteps: 9, showSignOut: true) {
-                showSignOutAlert = true
-            }
-            .environmentObject(session)
-            
             // Custom header with purple dot and Skip button
             HStack {
                 HStack(spacing: HYKATheme.spacingM) {

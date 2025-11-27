@@ -59,6 +59,11 @@ enum Config {
     static var garminActivityBackfillURL: String {
         return "\(edgeFunctionsBaseURL)/garmin-activity-backfill"
     }
+    
+    /// Garmin activity direct fetch Edge Function (for immediate sync)
+    static var garminActivityFetchURL: String {
+        return "\(edgeFunctionsBaseURL)/garmin-activity-fetch"
+    }
 }
 #else
 // This file should not be compiled - it's just a template

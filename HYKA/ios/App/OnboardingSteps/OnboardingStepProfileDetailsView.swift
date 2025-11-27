@@ -47,7 +47,7 @@ struct OnboardingStepProfileDetailsView: View {
                             
                             TextField("First name", text: $firstName)
                                 .font(HYKATheme.input)
-                                .foregroundColor(HYKATheme.Light.foreground)
+                                .foregroundColor(.black) // Typed text in black
                                 .padding(.horizontal, HYKATheme.spacingM)
                                 .padding(.vertical, HYKATheme.spacingM)
                                 .frame(height: 48)
@@ -67,7 +67,7 @@ struct OnboardingStepProfileDetailsView: View {
                             
                             TextField("Last name", text: $lastName)
                                 .font(HYKATheme.input)
-                                .foregroundColor(HYKATheme.Light.foreground)
+                                .foregroundColor(.black) // Typed text in black
                                 .padding(.horizontal, HYKATheme.spacingM)
                                 .padding(.vertical, HYKATheme.spacingM)
                                 .frame(height: 48)

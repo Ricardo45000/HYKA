@@ -85,6 +85,7 @@ struct SignUpProfileView: View {
                         
                         TextField("Enter your email", text: $email)
                             .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .foregroundColor(.black) // Typed text in black
                             .keyboardType(.emailAddress)
                             .autocapitalization(.none)
                     }
@@ -96,6 +97,7 @@ struct SignUpProfileView: View {
                         
                         SecureField("Enter your password", text: $password)
                             .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .foregroundColor(.black) // Typed text in black
                     }
                 }
             }
@@ -128,6 +130,7 @@ struct SignUpProfileView: View {
                         
                         TextField("Enter your first name", text: $firstName)
                             .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .foregroundColor(.black) // Typed text in black
                     }
                     
                     VStack(alignment: .leading, spacing: HYKATheme.spacingS) {
@@ -137,6 +140,7 @@ struct SignUpProfileView: View {
                         
                         TextField("Enter your last name", text: $lastName)
                             .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .foregroundColor(.black) // Typed text in black
                     }
                     
                     VStack(alignment: .leading, spacing: HYKATheme.spacingS) {

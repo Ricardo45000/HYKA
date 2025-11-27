@@ -20,8 +20,6 @@ struct ProfileInformationView: View {
     @State private var isSaving = false
     @State private var isChangingPassword = false
     @State private var showPasswordChange = false
-    @State private var showError = false
-    @State private var errorMessage = ""
     @State private var showSuccess = false
     @State private var successMessage = ""
     
@@ -42,7 +40,7 @@ struct ProfileInformationView: View {
                         .padding(.horizontal, HYKATheme.spacingXXL)
                     
                     VStack(spacing: 0) {
-                        // First Name
+                        // First Name (read-only)
                         VStack(alignment: .leading, spacing: HYKATheme.spacingXS) {
                             Text("First Name")
                                 .font(HYKATheme.caption)
@@ -50,7 +48,8 @@ struct ProfileInformationView: View {
                             
                             TextField("Enter first name", text: $firstName)
                                 .textFieldStyle(HYKATextFieldStyle())
-                                .focused($focusedField, equals: .firstName)
+                                .disabled(true)
+                                .foregroundColor(HYKATheme.Light.mutedForeground)
                         }
                         .padding(.horizontal, HYKATheme.spacingXXL)
                         .padding(.vertical, HYKATheme.spacingL)
@@ -58,7 +57,7 @@ struct ProfileInformationView: View {
                         Divider()
                             .padding(.leading, HYKATheme.spacingXXL)
                         
-                        // Last Name
+                        // Last Name (read-only)
                         VStack(alignment: .leading, spacing: HYKATheme.spacingXS) {
                             Text("Last Name")
                                 .font(HYKATheme.caption)
@@ -66,7 +65,8 @@ struct ProfileInformationView: View {
                             
                             TextField("Enter last name", text: $lastName)
                                 .textFieldStyle(HYKATextFieldStyle())
-                                .focused($focusedField, equals: .lastName)
+                                .disabled(true)
+                                .foregroundColor(HYKATheme.Light.mutedForeground)
                         }
                         .padding(.horizontal, HYKATheme.spacingXXL)
                         .padding(.vertical, HYKATheme.spacingL)
@@ -91,15 +91,25 @@ struct ProfileInformationView: View {
                         Divider()
                             .padding(.leading, HYKATheme.spacingXXL)
                         
-                        // Birth Date
+                        // Birth Date (read-only)
                         VStack(alignment: .leading, spacing: HYKATheme.spacingXS) {
                             Text("Birth Date")
                                 .font(HYKATheme.caption)
                                 .foregroundColor(HYKATheme.Light.mutedForeground)
                             
-                            DatePicker("", selection: $birthDate, displayedComponents: .date)
-                                .datePickerStyle(.compact)
-                                .accentColor(Color.hykaPurple)
+                            // Display birth date as text instead of DatePicker
+                            Text(formatDate(birthDate))
+                                .font(HYKATheme.body)
+                                .foregroundColor(HYKATheme.Light.mutedForeground)
+                                .padding(.horizontal, HYKATheme.spacingM)
+                                .padding(.vertical, HYKATheme.spacingM)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(HYKATheme.Light.card)
+                                .cornerRadius(HYKATheme.cornerRadiusM)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: HYKATheme.cornerRadiusM)
+                                        .stroke(Color.hykaPurple.opacity(0.2), lineWidth: 1)
+                                )
                         }
                         .padding(.horizontal, HYKATheme.spacingXXL)
                         .padding(.vertical, HYKATheme.spacingL)
@@ -107,19 +117,25 @@ struct ProfileInformationView: View {
                         Divider()
                             .padding(.leading, HYKATheme.spacingXXL)
                         
-                        // Gender
+                        // Gender (read-only)
                         VStack(alignment: .leading, spacing: HYKATheme.spacingXS) {
                             Text("Gender")
                                 .font(HYKATheme.caption)
                                 .foregroundColor(HYKATheme.Light.mutedForeground)
                             
-                            Picker("Gender", selection: $gender) {
-                                ForEach(UserProfile.Gender.allCases, id: \.self) { genderOption in
-                                    Text(genderOption.rawValue).tag(genderOption)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .accentColor(Color.hykaPurple)
+                            // Display gender as text instead of Picker
+                            Text(gender.rawValue)
+                                .font(HYKATheme.body)
+                                .foregroundColor(HYKATheme.Light.mutedForeground)
+                                .padding(.horizontal, HYKATheme.spacingM)
+                                .padding(.vertical, HYKATheme.spacingM)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(HYKATheme.Light.card)
+                                .cornerRadius(HYKATheme.cornerRadiusM)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: HYKATheme.cornerRadiusM)
+                                        .stroke(Color.hykaPurple.opacity(0.2), lineWidth: 1)
+                                )
                         }
                         .padding(.horizontal, HYKATheme.spacingXXL)
                         .padding(.vertical, HYKATheme.spacingL)
@@ -225,30 +241,32 @@ struct ProfileInformationView: View {
                 }
                 .padding(.horizontal, HYKATheme.spacingXXL)
                 
-                // Save Button
-                Button {
-                    Task {
-                        await saveProfile()
-                    }
-                } label: {
-                    HStack {
-                        if isSaving {
-                            ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                        } else {
-                            Text("Save Changes")
-                                .font(HYKATheme.button)
+                // Save Button (only shown when password change is active)
+                if showPasswordChange {
+                    Button {
+                        Task {
+                            await savePassword()
                         }
+                    } label: {
+                        HStack {
+                            if isChangingPassword {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            } else {
+                                Text("Save Password")
+                                    .font(HYKATheme.button)
+                            }
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 48)
+                        .background(isChangingPassword ? Color.gray : Color.hykaPurple)
+                        .cornerRadius(HYKATheme.cornerRadiusM)
                     }
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 48)
-                    .background(isSaving ? Color.gray : Color.hykaPurple)
-                    .cornerRadius(HYKATheme.cornerRadiusM)
+                    .disabled(isChangingPassword || isLoading)
+                    .padding(.horizontal, HYKATheme.spacingXXL)
+                    .padding(.top, HYKATheme.spacingL)
                 }
-                .disabled(isSaving || isLoading)
-                .padding(.horizontal, HYKATheme.spacingXXL)
-                .padding(.top, HYKATheme.spacingL)
             }
             .padding(.vertical, HYKATheme.spacingXXL)
         }
@@ -260,11 +278,7 @@ struct ProfileInformationView: View {
         .onAppear {
             loadProfile()
         }
-        .alert("Error", isPresented: $showError) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(errorMessage)
-        }
+        .withErrorDisplay()
         .alert("Success", isPresented: $showSuccess) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -295,110 +309,80 @@ struct ProfileInformationView: View {
                 }
             } catch {
                 await MainActor.run {
-                    errorMessage = "Failed to load profile: \(error.localizedDescription)"
-                    showError = true
+                    ErrorManager.shared.showError(error, title: "Failed to Load Profile")
                     isLoading = false
                 }
             }
         }
     }
     
-    private func saveProfile() async {
+    private func savePassword() async {
         guard let userId = session.currentUser?.id else {
             await MainActor.run {
-                errorMessage = "User not authenticated"
-                showError = true
+                ErrorManager.shared.showError(title: "Authentication Required", message: "User not authenticated")
             }
             return
         }
         
-        // Validate password change if shown
-        if showPasswordChange {
-            guard !currentPassword.isEmpty, !newPassword.isEmpty, !confirmPassword.isEmpty else {
-                await MainActor.run {
-                    errorMessage = "Please fill in all password fields"
-                    showError = true
-                }
-                return
+        // Validate password change
+        guard !currentPassword.isEmpty, !newPassword.isEmpty, !confirmPassword.isEmpty else {
+            await MainActor.run {
+                ErrorManager.shared.showError(title: "Validation Error", message: "Please fill in all password fields")
             }
-            
-            guard newPassword == confirmPassword else {
-                await MainActor.run {
-                    errorMessage = "New passwords do not match"
-                    showError = true
-                }
-                return
-            }
-            
-            guard newPassword.count >= 6 else {
-                await MainActor.run {
-                    errorMessage = "Password must be at least 6 characters"
-                    showError = true
-                }
-                return
-            }
-            
-            // Change password
-            isChangingPassword = true
-            do {
-                // Update password using Supabase Auth
-                // First verify current password by attempting to sign in
-                let currentEmail = session.currentUser?.email ?? ""
-                _ = try await Supa.client.auth.signIn(email: currentEmail, password: currentPassword)
-                
-                // If sign in succeeds, update password
-                try await Supa.client.auth.update(user: UserAttributes(password: newPassword))
-                
-                await MainActor.run {
-                    isChangingPassword = false
-                    showPasswordChange = false
-                    currentPassword = ""
-                    newPassword = ""
-                    confirmPassword = ""
-                    successMessage = "Password changed successfully"
-                    showSuccess = true
-                }
-            } catch {
-                await MainActor.run {
-                    isChangingPassword = false
-                    if error.localizedDescription.contains("Invalid login credentials") || error.localizedDescription.contains("Email not confirmed") {
-                        errorMessage = "Current password is incorrect"
-                    } else {
-                        errorMessage = "Failed to change password: \(error.localizedDescription)"
-                    }
-                    showError = true
-                }
-                return
-            }
+            return
         }
         
-        // Save profile
-        isSaving = true
+        guard newPassword == confirmPassword else {
+            await MainActor.run {
+                ErrorManager.shared.showError(title: "Validation Error", message: "New passwords do not match")
+            }
+            return
+        }
+        
+        guard newPassword.count >= 6 else {
+            await MainActor.run {
+                ErrorManager.shared.showError(title: "Validation Error", message: "Password must be at least 6 characters")
+            }
+            return
+        }
+        
+        // Change password
+        isChangingPassword = true
         do {
-            let profile = UserProfile(
-                firstName: firstName,
-                lastName: lastName,
-                birthDate: birthDate,
-                gender: gender,
-                runningDistances: [],
-                experienceLevel: .beginner,
-                customDistance: ""
-            )
+            // Update password using Supabase Auth
+            // First verify current password by attempting to sign in
+            let currentEmail = session.currentUser?.email ?? ""
+            _ = try await Supa.client.auth.signIn(email: currentEmail, password: currentPassword)
             
-            try await SupabaseService.saveUserProfile(profile, userId: userId)
+            // If sign in succeeds, update password
+            try await Supa.client.auth.update(user: UserAttributes(password: newPassword))
             
             await MainActor.run {
-                isSaving = false
-                successMessage = "Profile updated successfully"
+                isChangingPassword = false
+                showPasswordChange = false
+                currentPassword = ""
+                newPassword = ""
+                confirmPassword = ""
+                successMessage = "Password changed successfully"
                 showSuccess = true
             }
         } catch {
             await MainActor.run {
-                isSaving = false
-                errorMessage = "Failed to save profile: \(error.localizedDescription)"
-                showError = true
+                isChangingPassword = false
+                if error.localizedDescription.contains("Invalid login credentials") || error.localizedDescription.contains("Email not confirmed") {
+                    ErrorManager.shared.showError(title: "Password Change Failed", message: "Current password is incorrect")
+                } else {
+                    ErrorManager.shared.showError(error, title: "Failed to Change Password")
+                }
             }
         }
+    }
+    
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter.string(from: date)
     }
 }
 
@@ -407,6 +391,7 @@ struct ProfileInformationView: View {
 struct HYKATextFieldStyle: TextFieldStyle {
     func _body(configuration: TextField<Self._Label>) -> some View {
         configuration
+            .foregroundColor(.black) // Typed text in black
             .padding(HYKATheme.spacingM)
             .background(HYKATheme.Light.card)
             .cornerRadius(HYKATheme.cornerRadiusM)

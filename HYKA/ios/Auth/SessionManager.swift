@@ -57,6 +57,10 @@ final class SessionManager: NSObject, ObservableObject {
         } catch {
             // No existing session from SDK - check UserDefaults fallback
             print("ℹ️ No session found in SDK, checking UserDefaults fallback...")
+            print("   Error: \(error.localizedDescription)")
+            
+            // Check if we're offline
+            let isOffline = !NetworkMonitor.shared.isConnected
             
             // Check if we have a user ID stored in UserDefaults (from OAuth fallback)
             if let userIdString = UserDefaults.standard.string(forKey: "hyka.user.id"),
@@ -66,56 +70,87 @@ final class SessionManager: NSObject, ObservableObject {
                 if let sessionData = UserDefaults.standard.data(forKey: "supabase.auth.session") {
                     print("✅ Found session data in UserDefaults, user is authenticated")
                     print("   User ID from UserDefaults: \(userIdString)")
+                    print("   Offline mode: \(isOffline)")
                     
-                    // CRITICAL: Restore session to Supabase SDK so RLS policies work
-                    print("🔄 Restoring session to Supabase SDK...")
-                    do {
-                        // Parse session data from UserDefaults
+                    // If offline, skip SDK restoration and use cached data
+                    if isOffline {
+                        print("📦 Offline mode: Using cached session data without SDK restoration")
+                        
+                        // Parse session data to get user info
                         if let sessionDict = try? JSONSerialization.jsonObject(with: sessionData) as? [String: Any],
-                           let accessToken = sessionDict["access_token"] as? String,
-                           let refreshToken = sessionDict["refresh_token"] as? String {
+                           let email = sessionDict["user"] as? [String: Any]? ?? sessionDict["email"] as? String ?? UserDefaults.standard.string(forKey: "hyka.user.email") {
                             
-                            // Use the Supabase Swift SDK's setSession method directly
-                            // Reference: https://supabase.com/docs/reference/swift/auth-setsession
-                            try await Supa.client.auth.setSession(accessToken: accessToken, refreshToken: refreshToken)
-                            print("✅ Successfully restored session to Supabase SDK using setSession method")
+                            // Create a minimal User object from cached data
+                            // We'll use the stored user ID and email
+                            // Note: This is a workaround for offline mode
+                            print("✅ Restored user from cache: \(userIdString)")
                             
-                            // Verify the session is set
-                            let restoredSession = try await Supa.client.auth.session
-                            print("✅ Verified session is set in SDK - user ID: \(restoredSession.user.id)")
-                            print("   Access token present: \(!restoredSession.accessToken.isEmpty)")
-                            currentUser = restoredSession.user
+                            // Set authentication state from cache
+                            isAuthenticated = true
+                            hasCompletedOnboarding = UserDefaults.standard.bool(forKey: onboardingKey)
+                            
+                            // Try to create a User object - we'll need to check what fields are available
+                            // For now, we'll set isAuthenticated and let the app work with cached data
+                            print("✅ User authenticated via cached session (offline mode)")
+                            print("   - isAuthenticated: \(isAuthenticated)")
+                            print("   - hasCompletedOnboarding: \(hasCompletedOnboarding)")
+                            print("   - Note: Some features may be limited while offline")
                         } else {
-                            print("⚠️ Failed to parse session data from UserDefaults")
+                            print("⚠️ Failed to parse cached session data")
+                            isAuthenticated = true // Still authenticated, just can't parse full data
+                            hasCompletedOnboarding = UserDefaults.standard.bool(forKey: onboardingKey)
                         }
-                    } catch {
-                        print("⚠️ Failed to restore session to SDK: \(error)")
-                        print("   RLS policies may still fail - using REST API fallback")
-                    }
-                    
-                    isAuthenticated = true
-                    hasCompletedOnboarding = UserDefaults.standard.bool(forKey: onboardingKey)
-                    
-                    // Try to fetch user info to populate currentUser
-                    do {
-                        let hasCompleted = try await SupabaseService.hasCompletedOnboarding(userId: userId)
-                        hasCompletedOnboarding = hasCompleted
-                        UserDefaults.standard.set(hasCompleted, forKey: onboardingKey)
-                        print("✅ Onboarding status loaded from Supabase: \(hasCompleted)")
-                    } catch {
-                        print("⚠️ Failed to load onboarding status from Supabase")
-                        print("   Error: \(error)")
-                        if let postgrestError = error as? PostgrestError {
-                            print("   PostgrestError code: \(postgrestError.code ?? "nil")")
-                            print("   PostgrestError message: \(postgrestError.message)")
+                    } else {
+                        // Online - try to restore session to SDK
+                        print("🔄 Restoring session to Supabase SDK...")
+                        do {
+                            // Parse session data from UserDefaults
+                            if let sessionDict = try? JSONSerialization.jsonObject(with: sessionData) as? [String: Any],
+                               let accessToken = sessionDict["access_token"] as? String,
+                               let refreshToken = sessionDict["refresh_token"] as? String {
+                                
+                                // Use the Supabase Swift SDK's setSession method directly
+                                // Reference: https://supabase.com/docs/reference/swift/auth-setsession
+                                try await Supa.client.auth.setSession(accessToken: accessToken, refreshToken: refreshToken)
+                                print("✅ Successfully restored session to Supabase SDK using setSession method")
+                                
+                                // Verify the session is set
+                                let restoredSession = try await Supa.client.auth.session
+                                print("✅ Verified session is set in SDK - user ID: \(restoredSession.user.id)")
+                                print("   Access token present: \(!restoredSession.accessToken.isEmpty)")
+                                currentUser = restoredSession.user
+                            } else {
+                                print("⚠️ Failed to parse session data from UserDefaults")
+                            }
+                        } catch {
+                            print("⚠️ Failed to restore session to SDK: \(error)")
+                            print("   RLS policies may still fail - using REST API fallback")
                         }
-                        print("   Using UserDefaults value: \(hasCompletedOnboarding)")
-                        print("   (This is normal for new users who haven't completed onboarding yet)")
+                        
+                        isAuthenticated = true
+                        hasCompletedOnboarding = UserDefaults.standard.bool(forKey: onboardingKey)
+                        
+                        // Try to fetch user info to populate currentUser
+                        do {
+                            let hasCompleted = try await SupabaseService.hasCompletedOnboarding(userId: userId)
+                            hasCompletedOnboarding = hasCompleted
+                            UserDefaults.standard.set(hasCompleted, forKey: onboardingKey)
+                            print("✅ Onboarding status loaded from Supabase: \(hasCompleted)")
+                        } catch {
+                            print("⚠️ Failed to load onboarding status from Supabase")
+                            print("   Error: \(error)")
+                            if let postgrestError = error as? PostgrestError {
+                                print("   PostgrestError code: \(postgrestError.code ?? "nil")")
+                                print("   PostgrestError message: \(postgrestError.message)")
+                            }
+                            print("   Using UserDefaults value: \(hasCompletedOnboarding)")
+                            print("   (This is normal for new users who haven't completed onboarding yet)")
+                        }
+                        
+                        print("✅ checkSession() - User authenticated via UserDefaults fallback")
+                        print("   - isAuthenticated: \(isAuthenticated)")
+                        print("   - hasCompletedOnboarding: \(hasCompletedOnboarding)")
                     }
-                    
-                    print("✅ checkSession() - User authenticated via UserDefaults fallback")
-                    print("   - isAuthenticated: \(isAuthenticated)")
-                    print("   - hasCompletedOnboarding: \(hasCompletedOnboarding)")
                 } else {
                     print("⚠️ User ID found but no session data - user may not be authenticated")
                     isAuthenticated = false
@@ -139,6 +174,26 @@ final class SessionManager: NSObject, ObservableObject {
             currentUser = response.user
             isAuthenticated = true
             print("✅ Sign up successful for: \(email)")
+            
+            // Store user ID and email in UserDefaults for offline access
+            UserDefaults.standard.set(response.user.id.uuidString, forKey: "hyka.user.id")
+            UserDefaults.standard.set(email, forKey: "hyka.user.email")
+            
+            // Store session data for offline fallback
+            if let session = try? await Supa.client.auth.session {
+                let sessionDict: [String: Any] = [
+                    "access_token": session.accessToken,
+                    "refresh_token": session.refreshToken,
+                    "user": [
+                        "id": session.user.id.uuidString,
+                        "email": email
+                    ]
+                ]
+                if let sessionJSON = try? JSONSerialization.data(withJSONObject: sessionDict) {
+                    UserDefaults.standard.set(sessionJSON, forKey: "supabase.auth.session")
+                    print("✅ Stored session in UserDefaults for offline access")
+                }
+            }
             
             // Check onboarding status from Supabase for new user
             do {
@@ -164,6 +219,33 @@ final class SessionManager: NSObject, ObservableObject {
             currentUser = response.user
             isAuthenticated = true
             print("✅ Sign in successful for: \(email)")
+            
+            // Store user ID and email in UserDefaults for offline access
+            UserDefaults.standard.set(response.user.id.uuidString, forKey: "hyka.user.id")
+            UserDefaults.standard.set(email, forKey: "hyka.user.email")
+            
+            // Store session data for offline fallback
+            if let session = try? await Supa.client.auth.session {
+                let sessionDict: [String: Any] = [
+                    "access_token": session.accessToken,
+                    "refresh_token": session.refreshToken,
+                    "user": [
+                        "id": session.user.id.uuidString,
+                        "email": email
+                    ]
+                ]
+                if let sessionJSON = try? JSONSerialization.data(withJSONObject: sessionDict) {
+                    UserDefaults.standard.set(sessionJSON, forKey: "supabase.auth.session")
+                    print("✅ Stored session in UserDefaults for offline access")
+                }
+            }
+            
+            // Register device token for push notifications
+            Task {
+                if let appDelegate = UIApplication.shared.delegate as? AppDelegate {
+                    await appDelegate.registerDeviceTokenForUser(response.user.id)
+                }
+            }
             
             // Check onboarding status from Supabase
             do {
@@ -1081,6 +1163,16 @@ final class SessionManager: NSObject, ObservableObject {
                     await MainActor.run {
                         print("✅ Setting isAuthenticated = true (this will trigger onChange in AuthView)")
                         isAuthenticated = true
+                        
+                        // Register device token for push notifications
+                        if let userId = currentUser?.id {
+                            Task {
+                                // Get AppDelegate and register device token
+                                if let appDelegate = UIApplication.shared.delegate as? AppDelegate {
+                                    await appDelegate.registerDeviceTokenForUser(userId)
+                                }
+                            }
+                        }
                     }
                 } catch {
                     // Fallback to UserDefaults if Supabase check fails

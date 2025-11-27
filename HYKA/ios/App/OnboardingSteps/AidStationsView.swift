@@ -22,11 +22,6 @@ struct AidStationsView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            OnboardingProgress(currentStep: 8, totalSteps: 9, showSignOut: true) {
-                showSignOutAlert = true
-            }
-            .environmentObject(session)
-            
             // Custom header with purple dot and Skip button
             HStack {
                 HStack(spacing: HYKATheme.spacingM) {
@@ -95,6 +90,7 @@ struct AidStationsView: View {
                                     TextField("e.g., Mountain Peak Aid", text: $stationName)
                                         .focused($focusedField, equals: .name)
                                         .font(HYKATheme.input)
+                                        .foregroundColor(.black) // Typed text in black
                                         .padding(HYKATheme.spacingM)
                                         .background(HYKATheme.Light.inputBackground)
                                         .cornerRadius(HYKATheme.cornerRadiusM)
@@ -112,6 +108,7 @@ struct AidStationsView: View {
                                     TextField("e.g., 30", text: $stationDistance)
                                         .focused($focusedField, equals: .distance)
                                         .font(HYKATheme.input)
+                                        .foregroundColor(.black) // Typed text in black
                                         .keyboardType(.decimalPad)
                                         .padding(HYKATheme.spacingM)
                                         .background(HYKATheme.Light.inputBackground)

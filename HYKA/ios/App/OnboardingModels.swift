@@ -11,18 +11,25 @@ struct RaceDetails {
     let difficulty: String
 }
 
-struct AidStation: Identifiable {
-    let id = UUID()
+struct AidStation: Identifiable, Codable {
+    let id: UUID
     let name: String
     let distance: Double // in kilometers
     let services: [AidService]
+    
+    init(id: UUID = UUID(), name: String, distance: Double, services: [AidService]) {
+        self.id = id
+        self.name = name
+        self.distance = distance
+        self.services = services
+    }
 }
 
-struct AidService {
+struct AidService: Codable {
     let type: ServiceType
     let isAvailable: Bool
     
-    enum ServiceType: String, CaseIterable {
+    enum ServiceType: String, CaseIterable, Codable {
         case hydration = "Hydration"
         case gels = "Gels"
         case food = "Food"
@@ -44,17 +51,16 @@ struct StrategyPreferences {
     var nutritionPreferences: [NutritionPreference] = []
     
     enum RaceGoal: String, CaseIterable {
-        case finish = "Finish"
-        case timeGoal = "Time goal"
-        case podium = "Podium"
-        case experience = "Experience"
+        case finish = "Finish the race"
+        case timeGoal = "Hit a specific time goal"
+        case podium = "Compete for podium/placement"
+        case experience = "Enjoy the experience"
     }
     
     enum NutritionPreference: String, CaseIterable {
-        case gels = "Gels"
-        case realFood = "Real Food"
-        case mix = "Mix"
-        case ownPlan = "Own Plan"
+        case gels = "Energy gels and chews"
+        case realFood = "Real Food (bars, sandwiches, etc.)"
+        case mix = "Mix of both"
     }
 }
 
@@ -164,10 +170,7 @@ extension NutritionPlan {
 
 extension DeviceConnection {
     static let mock = [
-        DeviceConnection(name: "Garmin", icon: "GarminIcon", isConnected: false),
-        DeviceConnection(name: "Suunto", icon: "SuuntoIcon", isConnected: false),
-        DeviceConnection(name: "Coros", icon: "CorosIcon", isConnected: false),
-        DeviceConnection(name: "Polar", icon: "PolarIcon", isConnected: false)
+        DeviceConnection(name: "Garmin", icon: "GarminIcon", isConnected: false)
     ]
 }
 

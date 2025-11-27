@@ -128,10 +128,12 @@ struct HYKAUIInput: View {
             if isSecure {
                 SecureField(placeholder, text: $text)
                     .font(HYKATheme.input)
+                    .foregroundColor(.black) // Typed text in black
                     .textContentType(textContentType)
             } else {
                 TextField(placeholder, text: $text)
                     .font(HYKATheme.input)
+                    .foregroundColor(.black) // Typed text in black
                     .keyboardType(keyboardType)
                     .textContentType(textContentType)
             }

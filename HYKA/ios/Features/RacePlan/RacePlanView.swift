@@ -7,8 +7,8 @@ import PostgREST
 
 // MARK: - Supporting Models
 
-struct PacingSegment: Identifiable {
-    let id = UUID()
+struct PacingSegment: Identifiable, Codable {
+    let id: UUID
     let from: String
     let to: String
     let fromDistance: Double
@@ -23,6 +23,23 @@ struct PacingSegment: Identifiable {
     let elevationGain: Int
     let elevationLoss: Int
     
+    init(id: UUID = UUID(), from: String, to: String, fromDistance: Double, toDistance: Double, segmentDistance: Double, duration: String, effortLevel: EffortLevel, effortBars: [EffortBar], heartRate: String, effortLabel: String, estimatedPace: String, elevationGain: Int, elevationLoss: Int) {
+        self.id = id
+        self.from = from
+        self.to = to
+        self.fromDistance = fromDistance
+        self.toDistance = toDistance
+        self.segmentDistance = segmentDistance
+        self.duration = duration
+        self.effortLevel = effortLevel
+        self.effortBars = effortBars
+        self.heartRate = heartRate
+        self.effortLabel = effortLabel
+        self.estimatedPace = estimatedPace
+        self.elevationGain = elevationGain
+        self.elevationLoss = elevationLoss
+    }
+    
     var borderColor: Color {
         switch effortLevel {
         case .conservative: return .green
@@ -32,14 +49,14 @@ struct PacingSegment: Identifiable {
         }
     }
     
-    enum EffortLevel {
+    enum EffortLevel: String, Codable {
         case conservative
         case build
         case moderate
         case hard
     }
     
-    enum EffortBar {
+    enum EffortBar: String, Codable {
         case green
         case orange
         case grey
@@ -54,7 +71,7 @@ struct PacingSegment: Identifiable {
     }
 }
 
-struct FuelingStation {
+struct FuelingStation: Codable {
     let name: String
     let time: String
     let elapsed: String
@@ -72,6 +89,13 @@ struct AthleteAnalytics {
     let fatigueRatePerHour: Double
     let caloriesPerHour: Double
     let weightKg: Double?
+}
+
+struct WeatherData: Codable {
+    let temperature: String
+    let conditions: String
+    let wind: String
+    let humidity: String
 }
 
 private struct SectionPlan {
@@ -130,14 +154,6 @@ struct RacePlanView: View {
         var carbs: Int
         var sodium: Int
         var isCustom: Bool // To distinguish between default and custom fuel types
-    }
-    
-    // Weather Data Model
-    struct WeatherData {
-        let temperature: String
-        let conditions: String
-        let wind: String
-        let humidity: String
     }
 
     var body: some View {
@@ -319,33 +335,6 @@ struct RacePlanView: View {
                                         .background(Color.hykaPurple)
                                         .cornerRadius(HYKATheme.cornerRadiusM)
                                     }
-                                    
-                                    // Sync with device button - triggers historical backfill
-                                    Button {
-                                        Task {
-                                            await syncWithDevice()
-                                        }
-                                    } label: {
-                                        HStack {
-                                            if isSyncingDevice {
-                                                ProgressView()
-                                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                                    .scaleEffect(0.8)
-                                            } else {
-                                                Image(systemName: "arrow.triangle.2.circlepath")
-                                                    .font(.system(size: 14, weight: .semibold))
-                                            }
-                                            Text(isSyncingDevice ? "Syncing..." : "Sync with \(connectedProvider?.capitalized ?? "Device")")
-                                                .font(.system(size: 12, weight: .semibold))
-                                                .lineLimit(1)
-                                        }
-                                        .foregroundColor(.white)
-                                        .frame(maxWidth: .infinity)
-                                        .frame(height: 40)
-                                        .background(isSyncingDevice ? Color.gray : Color.hykaPurple)
-                                        .cornerRadius(HYKATheme.cornerRadiusM)
-                                    }
-                                    .disabled(isSyncingDevice || connectedProvider == nil)
                                 }
                             }
                             .padding(.top, HYKATheme.spacingM)
@@ -485,7 +474,10 @@ struct RacePlanView: View {
         } message: { plan in
             Text("This will remove \(plan.title) and its associated data.")
         }
-        .sheet(isPresented: $showShareSheet) {
+        .sheet(isPresented: Binding(
+            get: { showShareSheet && pdfURL != nil },
+            set: { showShareSheet = $0 }
+        )) {
             if let pdfURL = pdfURL {
                 ShareSheet(items: [pdfURL])
             }
@@ -1753,6 +1745,7 @@ struct RacePlanView: View {
                 connectedProvider = connections.first?.provider
             }
         } catch {
+            // Non-critical error - just log, don't show to user
             print("⚠️ Failed to fetch connected provider: \(error)")
         }
     }
@@ -1891,29 +1884,121 @@ struct RacePlanView: View {
             }
         } catch {
             print("❌ Error loading race plans: \(error)")
-            ErrorManager.shared.showError(error, title: "Failed to Load Race Plans")
             
-            do {
-                let fuelTypesFromDB = try await SupabaseService.fetchFuelTypes(userId: userId)
+            // Show error to user if not offline (offline errors are handled by cache)
+            if NetworkMonitor.shared.isConnected {
+                ErrorManager.shared.showError(error, title: "Failed to Load Race Plans")
+            }
+            
+            // Try to load from cache even if fetch failed
+            let cachedPlans = await RacePlanListCache.shared.plans(for: userId)
+            if let cached = cachedPlans, !cached.isEmpty {
+                print("📦 Loading race plans from cache after error")
+                var planToLoad: RacePlanSummary?
+                
                 await MainActor.run {
+                    racePlans = cached
+                    selectedRace = cached.first
+                    planToLoad = cached.first
+                }
+                
+                if let plan = planToLoad {
+                    // Try to load details, but if that fails, at least load metadata
+                    do {
+                        try await loadRaceDetails(for: plan, userId: userId, forceRefresh: false)
+                    } catch {
+                        print("⚠️ Could not load race details, loading metadata from cache")
+                        if let cachedMetadata = RacePlanMetadataStore.load(for: plan.id) {
+                            await MainActor.run {
+                                raceMetadata = cachedMetadata
+                            }
+                        }
+                        if let cachedDetail = await RacePlanDetailCache.shared.detail(for: plan.id) {
+                            await MainActor.run {
+                                applyCachedDetail(cachedDetail, skipRecalculation: true)
+                            }
+                        }
+                    }
+                }
+            } else {
+                ErrorManager.shared.showError(error, title: "Failed to Load Race Plans")
+            }
+        }
+        
+        // Always load fuel types, regardless of whether race plans loaded successfully or not
+        do {
+            print("🔧 Loading fuel types for user: \(userId)")
+            var fuelTypesFromDB = try await SupabaseService.fetchFuelTypes(userId: userId)
+            print("📊 Fetched \(fuelTypesFromDB.count) fuel types from database")
+            
+            // If no fuel types exist, create default ones
+            if fuelTypesFromDB.isEmpty {
+                print("⚠️ No fuel types found, creating default fuel types...")
+                do {
+                    try await SupabaseService.ensureDefaultFuelTypes(userId: userId)
+                    fuelTypesFromDB = try await SupabaseService.fetchFuelTypes(userId: userId)
+                    print("✅ Created and loaded \(fuelTypesFromDB.count) default fuel types")
+                } catch {
+                    print("❌ Failed to create default fuel types: \(error)")
+                    ErrorManager.shared.showError(error, title: "Failed to Create Fuel Types")
+                    // Continue anyway - user can add fuel types manually
+                }
+            }
+            
+            await MainActor.run {
+                if !fuelTypesFromDB.isEmpty {
                     fuelTypes = makeFuelTypes(from: fuelTypesFromDB)
-                    weatherLocation = "Dublin, Ireland"
-                    weatherCoordinates = nil
+                    print("✅ Loaded \(fuelTypes.count) fuel types into UI")
+                } else {
+                    print("⚠️ No fuel types available")
                 }
-                await fetchWeather(location: weatherLocation)
+            }
+        } catch {
+            // Ignore cancellation errors (these happen when views are dismissed)
+            if let urlError = error as? URLError, urlError.code == .cancelled {
+                print("ℹ️ Fuel types request was cancelled (likely view dismissed)")
+                return
+            }
+            let errorString = String(describing: error)
+            if errorString.contains("Code=-999") || errorString.contains("cancelled") {
+                print("ℹ️ Fuel types request was cancelled (likely view dismissed)")
+                return
+            }
+            
+            // If fetch failed, try to load from cache
+            print("⚠️ Error loading fuel types, trying cache: \(error)")
+            do {
+                var cachedFuelTypes = try await SupabaseService.fetchFuelTypes(userId: userId)
+                
+                // If cache is also empty, try to create default fuel types
+                if cachedFuelTypes.isEmpty {
+                    print("⚠️ Cache is empty, attempting to create default fuel types...")
+                    do {
+                        try await SupabaseService.ensureDefaultFuelTypes(userId: userId)
+                        cachedFuelTypes = try await SupabaseService.fetchFuelTypes(userId: userId)
+                        print("✅ Created and loaded \(cachedFuelTypes.count) default fuel types")
+                    } catch {
+                        print("❌ Could not create default fuel types: \(error)")
+                        ErrorManager.shared.showError(error, title: "Failed to Create Fuel Types")
+                    }
+                }
+                
+                await MainActor.run {
+                    if !cachedFuelTypes.isEmpty {
+                        fuelTypes = makeFuelTypes(from: cachedFuelTypes)
+                        print("✅ Loaded \(fuelTypes.count) fuel types from cache after error")
+                    } else if fuelTypes.isEmpty {
+                        print("⚠️ No fuel types available (neither from fetch nor cache)")
+                    } else {
+                        print("ℹ️ Keeping existing \(fuelTypes.count) cached fuel types")
+                    }
+                }
             } catch {
-                // Ignore cancellation errors (these happen when views are dismissed)
-                if let urlError = error as? URLError, urlError.code == .cancelled {
-                    print("ℹ️ Fuel types request was cancelled (likely view dismissed)")
-                    return
+                print("❌ Could not load fuel types from cache either: \(error)")
+                // Don't show error if we have cached fuel types already
+                if await MainActor.run(body: { fuelTypes.isEmpty }) {
+                    ErrorManager.shared.showError(error, title: "Failed to Load Fuel Types")
                 }
-                let errorString = String(describing: error)
-                if errorString.contains("Code=-999") || errorString.contains("cancelled") {
-                    print("ℹ️ Fuel types request was cancelled (likely view dismissed)")
-                    return
-                }
-                print("❌ Error loading fallback fuel types: \(error)")
-                ErrorManager.shared.showError(error, title: "Failed to Load Fuel Types")
             }
         }
         
@@ -1921,15 +2006,105 @@ struct RacePlanView: View {
     }
     
     private func loadRaceDetails(for plan: RacePlanSummary, userId: UUID, forceRefresh: Bool = false) async throws {
+        // Check if offline - load from cache
+        let isOffline = !NetworkMonitor.shared.isConnected
+        
         if !forceRefresh,
            let cachedDetail = await RacePlanDetailCache.shared.detail(for: plan.id),
            cachedDetail.lastUpdated == plan.updatedAt {
             await MainActor.run {
-                applyCachedDetail(cachedDetail)
+                applyCachedDetail(cachedDetail, skipRecalculation: false)
             }
             await fetchWeather(location: cachedDetail.weatherLocation, coordinates: cachedDetail.weatherCoordinates)
             return
         }
+        
+        // If offline and no cached detail, try to load at least metadata
+        if isOffline {
+            print("📦 Offline: Loading race metadata from cache")
+            if let cachedMetadata = RacePlanMetadataStore.load(for: plan.id) {
+                await MainActor.run {
+                    raceMetadata = cachedMetadata
+                    print("✅ Loaded race metadata from cache: date=\(cachedMetadata.raceDate?.description ?? "nil"), distance=\(cachedMetadata.distance?.description ?? "nil"), elevation=\(cachedMetadata.elevationGain?.description ?? "nil")")
+                }
+            }
+            
+            // Try to load cached detail even if lastUpdated doesn't match
+            if let cachedDetail = await RacePlanDetailCache.shared.detail(for: plan.id) {
+                print("📦 Offline: Loading full race detail from cache (may be outdated)")
+                print("   Cached aid stations count: \(cachedDetail.aidStations.count)")
+                print("   Cached pacing segments count: \(cachedDetail.pacingSegments.count)")
+                print("   Cached fueling stations count: \(cachedDetail.fuelingStations.count)")
+                await MainActor.run {
+                    applyCachedDetail(cachedDetail, skipRecalculation: true)
+                    print("   Applied aid stations count: \(aidStations.count)")
+                    print("   Applied pacing segments count: \(pacingSegments.count)")
+                    print("   Applied fueling stations count: \(fuelingStations.count)")
+                }
+                
+                // Try to load fuel types from cache
+                do {
+                    let fuelTypesFromDB = try await SupabaseService.fetchFuelTypes(userId: userId)
+                    await MainActor.run {
+                        fuelTypes = makeFuelTypes(from: fuelTypesFromDB)
+                        print("✅ Loaded \(fuelTypes.count) fuel types from cache")
+                    }
+                } catch {
+                    print("⚠️ Could not load fuel types from cache: \(error)")
+                }
+                
+                await fetchWeather(location: cachedDetail.weatherLocation, coordinates: cachedDetail.weatherCoordinates)
+                return
+            }
+            
+            // If we have metadata but no cached detail, try to load any cached detail (even if outdated)
+            if raceMetadata != nil {
+                print("✅ Offline: Showing cached metadata, attempting to load any cached detail")
+                
+                // Try to load cached detail even if it doesn't match lastUpdated
+                if let cachedDetail = await RacePlanDetailCache.shared.detail(for: plan.id) {
+                    print("📦 Found cached detail (may be outdated), loading it")
+                    await MainActor.run {
+                        applyCachedDetail(cachedDetail, skipRecalculation: true)
+                        print("   Applied from outdated cache:")
+                        print("   - Aid stations: \(aidStations.count)")
+                        print("   - Pacing segments: \(pacingSegments.count)")
+                        print("   - Fueling stations: \(fuelingStations.count)")
+                    }
+                    
+                    // Try to load fuel types from cache
+                    do {
+                        let fuelTypesFromDB = try await SupabaseService.fetchFuelTypes(userId: userId)
+                        await MainActor.run {
+                            fuelTypes = makeFuelTypes(from: fuelTypesFromDB)
+                            print("✅ Loaded \(fuelTypes.count) fuel types from cache")
+                        }
+                    } catch {
+                        print("⚠️ Could not load fuel types from cache: \(error)")
+                    }
+                    
+                    await fetchWeather(location: cachedDetail.weatherLocation, coordinates: cachedDetail.weatherCoordinates)
+                    return
+                } else {
+                    print("⚠️ No cached detail available, only showing metadata")
+                }
+                
+                // Still try to load fuel types from cache
+                do {
+                    let fuelTypesFromDB = try await SupabaseService.fetchFuelTypes(userId: userId)
+                    await MainActor.run {
+                        fuelTypes = makeFuelTypes(from: fuelTypesFromDB)
+                        print("✅ Loaded \(fuelTypes.count) fuel types from cache")
+                    }
+                } catch {
+                    print("⚠️ Could not load fuel types from cache: \(error)")
+                }
+                return
+            }
+            
+            throw NSError(domain: "RacePlanView", code: -1, userInfo: [NSLocalizedDescriptionKey: "No internet connection and no cached data available"])
+        }
+        
         let segments = try await SupabaseService.fetchRacePlanSegments(racePlanId: plan.id)
         let fuelTypesFromDB = try await SupabaseService.fetchFuelTypes(userId: userId)
         let trackPointsFromDB = try await SupabaseService.fetchRacePlanTrackPoints(racePlanId: plan.id)
@@ -2021,7 +2196,19 @@ struct RacePlanView: View {
             selectedRace = plan
             raceMetadata = updatedMetadata
             
-            fuelTypes = makeFuelTypes(from: fuelTypesFromDB)
+            // Only update fuelTypes if we got data, otherwise keep cached ones
+            let currentFuelTypesCount = fuelTypes.count
+            if !fuelTypesFromDB.isEmpty {
+                fuelTypes = makeFuelTypes(from: fuelTypesFromDB)
+                print("✅ Loaded \(fuelTypes.count) fuel types from database")
+            } else {
+                // Fetch returned empty - keep existing cached fuel types
+                if currentFuelTypesCount > 0 {
+                    print("ℹ️ Fetch returned empty, keeping \(currentFuelTypesCount) cached fuel types")
+                } else {
+                    print("⚠️ Fetch returned empty and no cached fuel types available")
+                }
+            }
             trackPoints = trackPointsFromDB
             
             aidStations = finalAidStations
@@ -2077,6 +2264,7 @@ struct RacePlanView: View {
             aidStationMetrics: metricsDictionary,
             weatherLocation: locationDisplay,
             weatherCoordinates: finalCoordinates,
+            weatherData: await MainActor.run { weatherData },
             lastUpdated: plan.updatedAt
         )
         await RacePlanDetailCache.shared.save(detail: cachedDetail, for: plan.id)
@@ -2104,8 +2292,40 @@ struct RacePlanView: View {
             try await loadRaceDetails(for: plan, userId: userId)
         } catch {
             print("❌ Error loading race details: \(error)")
-            await MainActor.run {
-                ErrorManager.shared.showError(error, title: "Failed to Load Race Details")
+            
+            // Even if fetch fails, try to load metadata from cache
+            if let cachedMetadata = RacePlanMetadataStore.load(for: plan.id) {
+                await MainActor.run {
+                    raceMetadata = cachedMetadata
+                    print("✅ Loaded race metadata from cache after error")
+                }
+            }
+            
+            // Try to load cached detail as fallback
+            if let cachedDetail = await RacePlanDetailCache.shared.detail(for: plan.id) {
+                print("📦 Loading cached detail as fallback after error")
+                print("   Cached pacing segments: \(cachedDetail.pacingSegments.count)")
+                print("   Cached fueling stations: \(cachedDetail.fuelingStations.count)")
+                await MainActor.run {
+                    applyCachedDetail(cachedDetail, skipRecalculation: true)
+                }
+                
+                // Try to load fuel types from cache
+                do {
+                    let fuelTypesFromDB = try await SupabaseService.fetchFuelTypes(userId: userId)
+                    await MainActor.run {
+                        fuelTypes = makeFuelTypes(from: fuelTypesFromDB)
+                        print("✅ Loaded \(fuelTypes.count) fuel types from cache after error")
+                    }
+                } catch {
+                    print("⚠️ Could not load fuel types from cache: \(error)")
+                }
+                
+                await fetchWeather(location: cachedDetail.weatherLocation, coordinates: cachedDetail.weatherCoordinates)
+            } else {
+                await MainActor.run {
+                    ErrorManager.shared.showError(error, title: "Failed to Load Race Details")
+                }
             }
         }
         
@@ -2158,24 +2378,87 @@ struct RacePlanView: View {
         let distanceKm = aidStations.last?.distance ?? 0
         guard distanceKm > 0 else { return "—" }
         
-        // If we have calculated pacing segments, sum their durations
+        // If we have calculated pacing segments, parse their duration strings (works offline)
         if !pacingSegments.isEmpty {
-            // Calculate total hours from existing section plans
-            // We need to parse the duration strings or use a cached total
-            // For now, use a simple approach: sum section hours if available
-            if let analytics = athleteAnalytics {
-                let totalDistance = raceMetadata?.distance ?? distanceKm
-                let temperature = parseTemperatureCelsius(from: weatherData) ?? 15.0
-                let sectionPlans = buildSectionPlans(
-                    aidStations: aidStations,
-                    metrics: aidStationMetrics,
-                    analytics: analytics,
-                    totalDistanceKm: totalDistance,
-                    temperatureC: temperature
-                )
-                let totalHours = sectionPlans.reduce(0) { $0 + $1.sectionHours }
-                if totalHours > 0 {
-                    return String(format: "%.1f hours", totalHours)
+            var totalMinutes: Double = 0
+            
+            for segment in pacingSegments {
+                // Parse duration string like "4h 7m" or "2h 05m" or "45m"
+                let duration = segment.duration.lowercased()
+                let hoursPattern = #"(\d+)\s*h"#
+                let minutesPattern = #"(\d+)\s*m"#
+                
+                if let hoursRange = duration.range(of: hoursPattern, options: .regularExpression) {
+                    let hoursSubstring = String(duration[hoursRange])
+                    let hoursStr = hoursSubstring.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+                    if !hoursStr.isEmpty, let hours = Double(hoursStr) {
+                        totalMinutes += hours * 60
+                    }
+                }
+                
+                if let minutesRange = duration.range(of: minutesPattern, options: .regularExpression) {
+                    let minutesSubstring = String(duration[minutesRange])
+                    let minutesStr = minutesSubstring.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+                    if !minutesStr.isEmpty, let minutes = Double(minutesStr) {
+                        totalMinutes += minutes
+                    }
+                }
+            }
+            
+            if totalMinutes > 0 {
+                if totalMinutes >= 60 {
+                    let hours = Int(totalMinutes / 60)
+                    let remainingMinutes = Int(totalMinutes.truncatingRemainder(dividingBy: 60))
+                    if remainingMinutes > 0 {
+                        return "\(hours)h \(remainingMinutes)m"
+                    } else {
+                        return "\(hours)h"
+                    }
+                } else {
+                    return "\(Int(totalMinutes))m"
+                }
+            }
+        }
+        
+        // Fallback: try to use cached aidStationMetrics if available (works offline)
+        if !aidStationMetrics.isEmpty {
+            let totalSeconds = aidStationMetrics.values.reduce(0.0) { $0 + $1.estimatedTimeSeconds }
+            if totalSeconds > 0 {
+                let totalHours = totalSeconds / 3600.0
+                if totalHours >= 1 {
+                    let hours = Int(totalHours)
+                    let minutes = Int((totalHours - Double(hours)) * 60)
+                    if minutes > 0 {
+                        return "\(hours)h \(minutes)m"
+                    } else {
+                        return "\(hours)h"
+                    }
+                } else {
+                    let minutes = Int(totalSeconds / 60.0)
+                    return "\(minutes)m"
+                }
+            }
+        }
+        
+        // If we have athlete analytics, calculate from section plans
+        if let analytics = athleteAnalytics {
+            let totalDistance = raceMetadata?.distance ?? distanceKm
+            let temperature = parseTemperatureCelsius(from: weatherData) ?? 15.0
+            let sectionPlans = buildSectionPlans(
+                aidStations: aidStations,
+                metrics: aidStationMetrics,
+                analytics: analytics,
+                totalDistanceKm: totalDistance,
+                temperatureC: temperature
+            )
+            let totalHours = sectionPlans.reduce(0) { $0 + $1.sectionHours }
+            if totalHours > 0 {
+                let hours = Int(totalHours)
+                let minutes = Int((totalHours - Double(hours)) * 60)
+                if minutes > 0 {
+                    return "\(hours)h \(minutes)m"
+                } else {
+                    return "\(hours)h"
                 }
             }
         }
@@ -2204,6 +2487,29 @@ struct RacePlanView: View {
     // MARK: - Weather API
     
     private func fetchWeather(location: String, coordinates overrideCoordinates: WeatherCoordinates? = nil) async {
+        // Check if offline - try to load from cache
+        let isOffline = !NetworkMonitor.shared.isConnected
+        if isOffline {
+            print("📦 Offline: Attempting to load weather data from cache")
+            if let planId = await MainActor.run(body: { racePlanId }),
+               let cachedDetail = await RacePlanDetailCache.shared.detail(for: planId),
+               let cachedWeather = cachedDetail.weatherData {
+                await MainActor.run {
+                    weatherData = cachedWeather
+                    weatherLocation = cachedDetail.weatherLocation
+                    weatherCoordinates = cachedDetail.weatherCoordinates
+                    print("✅ Loaded weather data from cache: \(cachedWeather.temperature), \(cachedWeather.conditions)")
+                }
+                return
+            } else {
+                print("⚠️ No cached weather data available offline")
+                await MainActor.run {
+                    isLoadingWeather = false
+                }
+                return
+            }
+        }
+        
         isLoadingWeather = true
         
         let resolvedCoordinates: WeatherCoordinates?
@@ -2284,14 +2590,35 @@ struct RacePlanView: View {
                 // Extract humidity
                 let humidity = values["humidityAvg"] as? Double ?? 0
                 
+                let newWeatherData = WeatherData(
+                    temperature: "\(Int(tempMin))-\(Int(tempMax))°C",
+                    conditions: conditions,
+                    wind: "\(Int(windSpeed * 3.6)) km/h",
+                    humidity: "\(Int(humidity))%"
+                )
+                
                 await MainActor.run {
-                    weatherData = WeatherData(
-                        temperature: "\(Int(tempMin))-\(Int(tempMax))°C",
-                        conditions: conditions,
-                        wind: "\(Int(windSpeed * 3.6)) km/h",
-                        humidity: "\(Int(humidity))%"
-                    )
+                    weatherData = newWeatherData
                     recalculateStrategy()
+                }
+                
+                // Save to cache
+                if let planId = await MainActor.run(body: { racePlanId }),
+                   let cachedDetail = await RacePlanDetailCache.shared.detail(for: planId) {
+                    let updatedDetail = CachedRacePlanDetail(
+                        metadata: cachedDetail.metadata,
+                        aidStations: cachedDetail.aidStations,
+                        pacingSegments: cachedDetail.pacingSegments,
+                        fuelingStations: cachedDetail.fuelingStations,
+                        trackPoints: cachedDetail.trackPoints,
+                        aidStationMetrics: cachedDetail.aidStationMetrics,
+                        weatherLocation: await MainActor.run { weatherLocation },
+                        weatherCoordinates: await MainActor.run { weatherCoordinates },
+                        weatherData: newWeatherData,
+                        lastUpdated: cachedDetail.lastUpdated
+                    )
+                    await RacePlanDetailCache.shared.save(detail: updatedDetail, for: planId)
+                    print("✅ Weather data cached")
                 }
                 
                 print("✅ Weather data loaded from Tomorrow.io: \(conditions)")
@@ -2309,14 +2636,35 @@ struct RacePlanView: View {
                     let windSpeed = values["windSpeed"] as? Double ?? 0
                     let humidity = values["humidity"] as? Double ?? 0
                     
+                    let newWeatherData = WeatherData(
+                        temperature: "\(Int(temp))°C",
+                        conditions: conditions,
+                        wind: "\(Int(windSpeed * 3.6)) km/h",
+                        humidity: "\(Int(humidity))%"
+                    )
+                    
                     await MainActor.run {
-                        weatherData = WeatherData(
-                            temperature: "\(Int(temp))°C",
-                            conditions: conditions,
-                            wind: "\(Int(windSpeed * 3.6)) km/h",
-                            humidity: "\(Int(humidity))%"
-                        )
+                        weatherData = newWeatherData
                         recalculateStrategy()
+                    }
+                    
+                    // Save to cache
+                    if let planId = await MainActor.run(body: { racePlanId }),
+                       let cachedDetail = await RacePlanDetailCache.shared.detail(for: planId) {
+                        let updatedDetail = CachedRacePlanDetail(
+                            metadata: cachedDetail.metadata,
+                            aidStations: cachedDetail.aidStations,
+                            pacingSegments: cachedDetail.pacingSegments,
+                            fuelingStations: cachedDetail.fuelingStations,
+                            trackPoints: cachedDetail.trackPoints,
+                            aidStationMetrics: cachedDetail.aidStationMetrics,
+                            weatherLocation: await MainActor.run { weatherLocation },
+                            weatherCoordinates: await MainActor.run { weatherCoordinates },
+                            weatherData: newWeatherData,
+                            lastUpdated: cachedDetail.lastUpdated
+                        )
+                        await RacePlanDetailCache.shared.save(detail: updatedDetail, for: planId)
+                        print("✅ Weather data cached (hourly fallback)")
                     }
                     
                     print("✅ Weather data loaded from Tomorrow.io (hourly): \(conditions)")
@@ -2798,7 +3146,7 @@ struct RacePlanView: View {
     }
     
     @MainActor
-    private func applyCachedDetail(_ detail: CachedRacePlanDetail) {
+    private func applyCachedDetail(_ detail: CachedRacePlanDetail, skipRecalculation: Bool = false) {
         raceMetadata = detail.metadata
         aidStations = detail.aidStations
         pacingSegments = detail.pacingSegments
@@ -2807,6 +3155,23 @@ struct RacePlanView: View {
         aidStationMetrics = detail.aidStationMetrics
         weatherCoordinates = detail.weatherCoordinates
         weatherLocation = detail.weatherLocation
+        weatherData = detail.weatherData
+        
+        print("✅ Applied cached detail:")
+        print("   - Aid stations: \(aidStations.count)")
+        print("   - Pacing segments: \(pacingSegments.count)")
+        print("   - Fueling stations: \(fuelingStations.count)")
+        print("   - Track points: \(trackPoints.count)")
+        print("   - Aid station metrics: \(aidStationMetrics.count)")
+        print("   - Weather data: \(detail.weatherData != nil ? "available" : "none")")
+        
+        // Only recalculate strategy if we have athleteAnalytics (online scenario)
+        // When offline, the cached pacingSegments and fuelingStations are already calculated
+        if !skipRecalculation, athleteAnalytics != nil {
+            recalculateStrategy()
+        } else {
+            print("ℹ️ Skipping strategy recalculation (offline or no analytics)")
+        }
     }
     
     private func parseTemperatureCelsius(from data: WeatherData?) -> Double? {
@@ -3215,6 +3580,102 @@ struct RacePlanView: View {
     // MARK: - PDF Generation
     
     @MainActor
+    /// Check why activities aren't automatically syncing via webhooks
+    private func checkSyncStatus() async {
+        guard let provider = connectedProvider?.lowercased() else {
+            print("⚠️ No provider connected")
+            return
+        }
+        
+        guard let userId = await resolveUserId() else {
+            print("⚠️ No user ID available")
+            return
+        }
+        
+        isSyncingDevice = true
+        
+        do {
+            if provider == "garmin" {
+                // Check webhook status and diagnose issues
+                print("🔍 Checking Garmin sync status...")
+                try await checkGarminSyncStatus(userId: userId)
+            } else {
+                // For other providers, use existing sync
+                await syncWithDevice()
+            }
+        } catch {
+            print("❌ Error checking sync status: \(error)")
+            await MainActor.run {
+                ErrorManager.shared.showError(error, title: "Status Check Failed")
+            }
+        }
+        
+        isSyncingDevice = false
+    }
+    
+    /// Check Garmin webhook status and diagnose why activities aren't syncing
+    private func checkGarminSyncStatus(userId: UUID) async throws {
+        let edgeFunctionURL = URL(string: "\(Config.edgeFunctionsBaseURL)/garmin-webhook-status")!
+        let supabaseAnonKey = Config.supabaseAnonKey
+        
+        var request = URLRequest(url: edgeFunctionURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(supabaseAnonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
+        
+        let requestBody: [String: Any] = [
+            "user_id": userId.uuidString
+        ]
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NSError(domain: "HYKA", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
+        }
+        
+        if httpResponse.statusCode == 200 {
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let diagnostics = json["diagnostics"] as? [String: Any] {
+                
+                let hasRecentActivities = diagnostics["activities"] as? [String: Any]
+                let recentCount = hasRecentActivities?["recent_count"] as? Int ?? 0
+                let recommendations = diagnostics["recommendations"] as? [String] ?? []
+                
+                print("📊 Sync Status:")
+                print("   Recent activities in database: \(recentCount)")
+                
+                if recentCount > 0 {
+                    await MainActor.run {
+                        ErrorManager.shared.showError(
+                            NSError(domain: "HYKA", code: 0, userInfo: [
+                                NSLocalizedDescriptionKey: "✅ Sync is working! Found \(recentCount) recent activities in database. Activities are syncing automatically via webhooks."
+                            ]),
+                            title: "Sync Status: Working"
+                        )
+                    }
+                } else {
+                    var message = "⚠️ No recent activities found. Possible issues:\n\n"
+                    for (index, rec) in recommendations.enumerated() {
+                        message += "\(index + 1). \(rec)\n"
+                    }
+                    message += "\nCheck Supabase Edge Function logs for webhook invocations."
+                    
+                    await MainActor.run {
+                        ErrorManager.shared.showError(
+                            NSError(domain: "HYKA", code: 1, userInfo: [
+                                NSLocalizedDescriptionKey: message
+                            ]),
+                            title: "Sync Status: Issues Detected"
+                        )
+                    }
+                }
+            }
+        }
+    }
+    
     private func syncWithDevice() async {
         guard let provider = connectedProvider?.lowercased() else {
             print("⚠️ No provider connected")
@@ -3240,11 +3701,11 @@ struct RacePlanView: View {
             print("🔄 Triggering historical backfill for \(provider)...")
             
             if provider == "garmin" {
-                // Trigger Garmin backfill via Edge Function
-                // Backfill will request historical data in 30-day chunks
-                // Garmin will send webhooks as activities are processed
-                try await triggerGarminBackfill(userId: userId)
-                print("✅ Garmin backfill triggered - activities will sync via webhooks")
+                // Request sync for last 60 days via direct fetch (1-day chunks)
+                // Activities will arrive via webhooks (PING or PUSH)
+                print("🔄 Requesting sync for last 60 days...")
+                try await triggerGarminDirectFetch(userId: userId, daysAgo: 60)
+                print("✅ Garmin sync requested - activities will arrive via webhooks")
             } else {
                 // For other providers (Polar, Coros, Suunto), use the old client-side approach
                 print("🔄 Fetching activities for \(provider) (client-side)...")
@@ -3280,197 +3741,117 @@ struct RacePlanView: View {
         isSyncingDevice = false
     }
     
-    /// Trigger Garmin historical backfill via Edge Function
+    /// Trigger Garmin direct fetch via Edge Function (1-day chunk strategy)
     /// The Edge Function will:
     /// 1. Look up the connection and get connected_at
-    /// 2. Calculate date ranges from connection date forward
-    /// 3. Request backfill in 29-day chunks
+    /// 2. Automatically adjust date range to connection date forward
+    /// 3. Split date range into 1-day chunks
+    /// 4. Make multiple small requests to minimize duplicate detection
     /// 
-    /// We let the Edge Function handle all date calculations to avoid RLS issues
-    private func triggerGarminBackfill(userId: UUID) async throws {
-        let edgeFunctionURL = URL(string: Config.garminActivityBackfillURL)!
+    /// This is a workaround for Garmin's backfill issues (remembers requests, doesn't deliver)
+    private func triggerGarminDirectFetch(userId: UUID, daysAgo: Int = 60) async throws {
+        let edgeFunctionURL = URL(string: Config.garminActivityDirectFetchURL)!
         let supabaseAnonKey = Config.supabaseAnonKey
         
-        // Use Supabase client to query garmin_connections (bypasses RLS with authenticated user)
-        // If that fails, let Edge Function handle it
-        var connectionDate: Date?
+        // Edge Function will handle connection date check and date range adjustment
+        print("🔄 Requesting activities for last \(daysAgo) days using 1-day chunk strategy")
+        print("   This minimizes Garmin's duplicate detection")
         
-        do {
-            let response = try await Supa.client
-                .from("garmin_connections")
-                .select("connected_at")
-                .eq("user_id", value: userId.uuidString)
-                .limit(1)
-                .single()
-                .execute()
-            
-            if let data = try? JSONSerialization.jsonObject(with: response.data) as? [String: Any],
-               let connectedAtString = data["connected_at"] as? String {
-                
-                let timestampFormatter = ISO8601DateFormatter()
-                timestampFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-                
-                if let date = timestampFormatter.date(from: connectedAtString) {
-                    connectionDate = date
-                    print("📅 Garmin connection date: \(date)")
-                }
-            }
-        } catch {
-            print("⚠️ Could not fetch connection date via Supabase client: \(error)")
-            print("   Edge Function will handle date calculation")
+        var request = URLRequest(url: edgeFunctionURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(supabaseAnonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
+        
+        let requestBody: [String: Any] = [
+            "user_id": userId.uuidString,
+            "days_ago": daysAgo
+        ]
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NSError(domain: "HYKA", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
         }
         
-        // If we have connection date, calculate chunks client-side
-        // Otherwise, let Edge Function handle it (it has service role access)
-        if let connectedAt = connectionDate {
-            // According to Garmin docs, backfill can retrieve historic data from before
-            // "user's registration with the partner program"
-            // So we'll request last 90 days from now (going backward), which may include
-            // data from before connection date
-            // Use 29-day chunks to avoid "exceeds 30 days" error (Garmin limit is 30 days)
-            let now = Date()
-            let calendar = Calendar.current
-            
-            // Start from 90 days ago, work forward in 29-day chunks to now
-            // This will include data from before connection if Garmin allows it
-            let ninetyDaysAgo = calendar.date(byAdding: .day, value: -90, to: now) ?? now
-            var currentStart = ninetyDaysAgo
-            var chunkNumber = 1
-            var hasMoreChunks = true
-            
-            while hasMoreChunks && currentStart < now {
-                // Calculate end date (29 days after start, or now if sooner)
-                let endDate = min(calendar.date(byAdding: .day, value: 29, to: currentStart) ?? now, now)
+        if httpResponse.statusCode == 200 {
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                let message = json["message"] as? String ?? "Requested"
+                let success = json["success"] as? Bool ?? true
+                let chunksRequested = json["chunks_requested"] as? Int ?? 0
                 
-                // If start and end are the same (or very close), we're done
-                if endDate <= currentStart || endDate.timeIntervalSince(currentStart) < 86400 { // Less than 1 day
-                    hasMoreChunks = false
-                    break
-                }
-                
-                let startTimeSeconds = Int(currentStart.timeIntervalSince1970)
-                let endTimeSeconds = Int(endDate.timeIntervalSince1970)
-                
-                var request = URLRequest(url: edgeFunctionURL)
-                request.httpMethod = "POST"
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.setValue("Bearer \(supabaseAnonKey)", forHTTPHeaderField: "Authorization")
-                request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
-                
-                let requestBody: [String: Any] = [
-                    "user_id": userId.uuidString,
-                    "summary_start_time_seconds": startTimeSeconds,
-                    "summary_end_time_seconds": endTimeSeconds
-                ]
-                
-                request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
-                
-                let dateFormatter = DateFormatter()
-                dateFormatter.dateStyle = .short
-                dateFormatter.timeStyle = .none
-                
-                print("🔄 Requesting backfill chunk \(chunkNumber): \(dateFormatter.string(from: currentStart)) to \(dateFormatter.string(from: endDate))")
-                
-                let (data, response) = try await URLSession.shared.data(for: request)
-                
-                guard let httpResponse = response as? HTTPURLResponse else {
-                    throw NSError(domain: "HYKA", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
-                }
-                
-                if httpResponse.statusCode == 200 || httpResponse.statusCode == 409 {
-                    // 200 = Success, 409 = Duplicate (already requested) - both are fine
-                    if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                        print("✅ Backfill chunk \(chunkNumber): \(json["message"] as? String ?? "Requested")")
+                if success {
+                    print("✅ Direct fetch requested: \(message)")
+                    print("   \(chunksRequested) chunks (1 day each) will be processed")
+                    
+                    if let dateRange = json["date_range"] as? [String: Any],
+                       let start = dateRange["start"] as? String,
+                       let end = dateRange["end"] as? String {
+                        print("   Date range: \(start) to \(end)")
+                    }
+                    
+                    if let note = json["note"] as? String {
+                        print("ℹ️ \(note)")
+                    }
+                    
+                    // Show success message to user
+                    await MainActor.run {
+                        ErrorManager.shared.showError(
+                            NSError(domain: "HYKA", code: 0, userInfo: [
+                                NSLocalizedDescriptionKey: "✅ Sync requested! \(chunksRequested) date ranges will be processed. Activities will arrive via webhooks over the next few minutes to hours."
+                            ]),
+                            title: "Sync Started"
+                        )
                     }
                 } else {
-                    let errorText = String(data: data, encoding: .utf8) ?? "Unknown error"
-                    print("⚠️ Backfill chunk \(chunkNumber) failed: HTTP \(httpResponse.statusCode) - \(errorText)")
-                    // Continue with other chunks even if one fails
+                    let errorMessage = json["error"] as? String ?? message
+                    throw NSError(domain: "HYKA", code: 1, userInfo: [NSLocalizedDescriptionKey: errorMessage])
                 }
                 
-                // Move to next chunk
-                currentStart = calendar.date(byAdding: .day, value: 30, to: currentStart) ?? endDate
-                chunkNumber += 1
-                
-                // Limit to max 10 chunks to avoid infinite loops
-                if chunkNumber > 10 {
-                    hasMoreChunks = false
-                }
-                
-                // Small delay between requests to avoid rate limiting
-                try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-            }
-            
-            print("✅ All backfill requests submitted - Garmin will process and send webhooks")
-        } else {
-            // Fallback: Let Edge Function calculate dates (it has service role access)
-            print("🔄 Requesting backfill - Edge Function will calculate date ranges")
-            
-            var request = URLRequest(url: edgeFunctionURL)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Bearer \(supabaseAnonKey)", forHTTPHeaderField: "Authorization")
-            request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
-            
-            let requestBody: [String: Any] = [
-                "user_id": userId.uuidString
-            ]
-            
-            request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
-            
-            let (data, response) = try await URLSession.shared.data(for: request)
-            
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw NSError(domain: "HYKA", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
-            }
-            
-            if httpResponse.statusCode == 200 {
-                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    let message = json["message"] as? String ?? "Requested"
-                    let success = json["success"] as? Bool ?? true
-                    
-                    if success {
-                        print("✅ Backfill requested: \(message)")
-                    } else {
-                        // Date range too small - this is expected for very recent connections
-                        print("ℹ️ \(message)")
-                        if let daysSinceConnection = json["days_since_connection"] as? String {
-                            print("   Connection is \(daysSinceConnection) days old")
-                        }
-                        // Don't throw error - this is expected behavior
+                // Log any errors from individual chunks
+                if let errors = json["errors"] as? [String], !errors.isEmpty {
+                    print("⚠️ Some chunks had errors:")
+                    for error in errors.prefix(5) { // Show first 5 errors
+                        print("   - \(error)")
+                    }
+                    if errors.count > 5 {
+                        print("   ... and \(errors.count - 5) more errors")
                     }
                 }
-            } else if httpResponse.statusCode == 409 {
-                // Duplicate request - this is fine
-                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    print("ℹ️ \(json["message"] as? String ?? "Duplicate backfill request")")
-                }
-            } else {
-                let errorText = String(data: data, encoding: .utf8) ?? "Unknown error"
-                print("⚠️ Backfill request failed: HTTP \(httpResponse.statusCode) - \(errorText)")
-                throw NSError(domain: "HYKA", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: errorText])
             }
+        } else {
+            let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw NSError(domain: "HYKA", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Direct fetch request failed: \(errorMessage)"])
         }
     }
     
     private func generateRaceStrategyPDF() async {
         guard let currentRace = selectedRace else { return }
         
-        // Create a view that represents the race strategy card
+        // Create a view that represents the race strategy card with calendar
         let strategyCardView = RaceStrategyCardPDFView(
             raceName: currentRace.title,
             raceDate: formattedMetadataDate(),
             distance: formattedRaceDistance(),
             elevationGain: formattedMetadataElevation(),
             estimatedTime: formattedEstimatedDuration(),
-            notes: raceMetadata?.notes?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+            notes: raceMetadata?.notes?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines),
+            pacingSegments: pacingSegments,
+            fuelingStations: fuelingStations,
+            aidStations: aidStations
         )
         
         // Render the view to PDF using UIGraphicsPDFRenderer
         let pdfData = await renderViewToPDF(strategyCardView)
         
         guard let pdfData = pdfData else {
-            ErrorManager.shared.showError(NSError(domain: "PDFGeneration", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to generate PDF"]), title: "PDF Generation Failed")
+            await MainActor.run {
+                ErrorManager.shared.showError(NSError(domain: "PDFGeneration", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to generate PDF"]), title: "PDF Generation Failed")
+                showShareSheet = false
+                pdfURL = nil
+            }
             return
         }
         
@@ -3480,10 +3861,16 @@ struct RacePlanView: View {
         
         do {
             try pdfData.write(to: tempURL)
-            pdfURL = tempURL
-            showShareSheet = true
+            await MainActor.run {
+                pdfURL = tempURL
+                showShareSheet = true
+            }
         } catch {
-            ErrorManager.shared.showError(error, title: "Failed to Save PDF")
+            await MainActor.run {
+                ErrorManager.shared.showError(error, title: "Failed to Save PDF")
+                showShareSheet = false
+                pdfURL = nil
+            }
         }
     }
     
@@ -3492,12 +3879,15 @@ struct RacePlanView: View {
         let hostingController = UIHostingController(rootView: view)
         hostingController.view.backgroundColor = .white
         
-        // A4 size in points (595 x 842 points at 72 DPI)
-        let pageSize = CGSize(width: 595, height: 842)
-        hostingController.view.frame = CGRect(origin: .zero, size: pageSize)
+        // A4 width in points (72 DPI)
+        let pageWidth: CGFloat = 595
+        let pageHeight: CGFloat = 842
+        
+        // First, measure the content height
+        hostingController.view.frame = CGRect(origin: .zero, size: CGSize(width: pageWidth, height: 10000))
         
         // Add to a window to ensure proper layout
-        let window = UIWindow(frame: CGRect(origin: .zero, size: pageSize))
+        let window = UIWindow(frame: CGRect(origin: .zero, size: CGSize(width: pageWidth, height: 10000)))
         window.rootViewController = hostingController
         window.isHidden = false
         
@@ -3506,10 +3896,26 @@ struct RacePlanView: View {
         hostingController.view.layoutIfNeeded()
         
         // Give the view a moment to render
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.2))
+        
+        // Calculate actual content height
+        let contentHeight = hostingController.view.systemLayoutSizeFitting(
+            CGSize(width: pageWidth, height: UIView.layoutFittingExpandedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+        
+        let actualHeight = max(contentHeight + 80, pageHeight) // Add padding, minimum one page
+        
+        // Update frame to actual size
+        hostingController.view.frame = CGRect(origin: .zero, size: CGSize(width: pageWidth, height: actualHeight))
+        hostingController.view.setNeedsLayout()
+        hostingController.view.layoutIfNeeded()
+        
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
         
         let format = UIGraphicsPDFRendererFormat()
-        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: pageSize), format: format)
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: CGSize(width: pageWidth, height: actualHeight)), format: format)
         
         let pdfData = renderer.pdfData { context in
             context.beginPage()
@@ -3545,7 +3951,7 @@ struct EditRaceModal: View {
                     
                     TextField("Enter race name", text: $raceName)
                         .font(HYKATheme.body)
-                        .foregroundColor(HYKATheme.Light.foreground)
+                        .foregroundColor(.black) // Typed text in black
                         .padding(HYKATheme.spacingM)
                         .background(HYKATheme.Light.card)
                         .cornerRadius(HYKATheme.cornerRadiusM)
@@ -3875,7 +4281,7 @@ struct LocationPickerModal: View {
                     TextField("Search location...", text: $searchText)
                         .focused($searchFieldFocused)
                         .font(.system(size: 16))
-                        .foregroundColor(HYKATheme.Light.foreground)
+                        .foregroundColor(.black) // Typed text in black
                         .textFieldStyle(PlainTextFieldStyle())
                     
                     if !searchText.isEmpty {
@@ -4058,16 +4464,39 @@ struct WeatherCoordinates: Codable, Equatable {
     let longitude: Double
 }
 
-fileprivate struct CachedRacePlanDetail {
+fileprivate struct CachedRacePlanDetail: Codable {
     let metadata: RacePlanMetadata
     let aidStations: [AidStation]
     let pacingSegments: [PacingSegment]
     let fuelingStations: [FuelingStation]
     let trackPoints: [TrackPoint]
-    let aidStationMetrics: [Int: AidStationSegmentMetrics]
+    let aidStationMetricsStringKeys: [String: AidStationSegmentMetrics] // For Codable encoding
     let weatherLocation: String
     let weatherCoordinates: WeatherCoordinates?
+    let weatherData: WeatherData?
     let lastUpdated: Date
+    
+    // Helper to convert from [Int: ...] to [String: ...]
+    init(metadata: RacePlanMetadata, aidStations: [AidStation], pacingSegments: [PacingSegment], fuelingStations: [FuelingStation], trackPoints: [TrackPoint], aidStationMetrics: [Int: AidStationSegmentMetrics], weatherLocation: String, weatherCoordinates: WeatherCoordinates?, weatherData: WeatherData?, lastUpdated: Date) {
+        self.metadata = metadata
+        self.aidStations = aidStations
+        self.pacingSegments = pacingSegments
+        self.fuelingStations = fuelingStations
+        self.trackPoints = trackPoints
+        self.aidStationMetricsStringKeys = Dictionary(uniqueKeysWithValues: aidStationMetrics.map { (String($0.key), $0.value) })
+        self.weatherLocation = weatherLocation
+        self.weatherCoordinates = weatherCoordinates
+        self.weatherData = weatherData
+        self.lastUpdated = lastUpdated
+    }
+    
+    // Helper to convert back to [Int: ...]
+    var aidStationMetrics: [Int: AidStationSegmentMetrics] {
+        Dictionary(uniqueKeysWithValues: aidStationMetricsStringKeys.compactMap { key, value in
+            guard let intKey = Int(key) else { return nil }
+            return (intKey, value)
+        })
+    }
 }
 
 
@@ -4080,6 +4509,9 @@ struct RaceStrategyCardPDFView: View {
     let elevationGain: String
     let estimatedTime: String
     let notes: String?
+    let pacingSegments: [PacingSegment]
+    let fuelingStations: [FuelingStation]
+    let aidStations: [AidStation]
     
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -4117,10 +4549,280 @@ struct RaceStrategyCardPDFView: View {
                 }
                 .padding(.top, 8)
             }
+            
+            // Your Race Calendar Section
+            if !pacingSegments.isEmpty {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Calendar Title
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Your Race Calendar")
+                            .font(.system(size: 22, weight: .bold))
+                            .foregroundColor(.black)
+                            .padding(.top, 20)
+                        
+                        Text("Comprehensive pacing and nutrition strategy for each section")
+                            .font(.system(size: 12, weight: .regular))
+                            .foregroundColor(.gray)
+                    }
+                    
+                    // Pacing and Fueling Cards
+                    ForEach(Array(pacingSegments.enumerated()), id: \.element.id) { index, segment in
+                        VStack(alignment: .leading, spacing: 12) {
+                            // Pacing Card
+                            PDFPacingCard(segment: segment)
+                            
+                            // Fueling Card (if available)
+                            if index < fuelingStations.count {
+                                PDFFuelingCard(station: fuelingStations[index])
+                            }
+                        }
+                        .padding(.top, index == 0 ? 0 : 12)
+                    }
+                    
+                    // Pacing Tips Card
+                    PDFPacingTipsCard()
+                        .padding(.top, 16)
+                    
+                    // Nutrition Tips Card
+                    PDFNutritionTipsCard()
+                        .padding(.top, 12)
+                    
+                    // Aid Stations Section
+                    PDFAidStationsSection(aidStations: aidStations)
+                        .padding(.top, 16)
+                }
+            }
         }
         .padding(40)
-        .frame(width: 595, height: 842) // A4 size in points (72 DPI)
+        .frame(width: 595) // A4 width in points (72 DPI)
+        .fixedSize(horizontal: true, vertical: false) // Allow vertical expansion
         .background(Color.white)
+    }
+}
+
+struct PDFPacingCard: View {
+    let segment: PacingSegment
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Header
+            HStack {
+                Text("Pacing: \(segment.from) → \(segment.to)")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.black)
+                Spacer()
+            }
+            
+            Text("\(String(format: "%.0f", segment.fromDistance))K - \(String(format: "%.0f", segment.toDistance))K (\(String(format: "%.1f", segment.segmentDistance))K) • \(segment.duration)")
+                .font(.system(size: 11, weight: .regular))
+                .foregroundColor(.gray)
+            
+            // Metrics
+            HStack(spacing: 20) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Est. Pace")
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundColor(.gray)
+                    Text(segment.estimatedPace)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.black)
+                }
+                
+                Spacer()
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Gain")
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundColor(.gray)
+                    Text("+\(segment.elevationGain)m")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.black)
+                }
+                
+                Spacer()
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Loss")
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundColor(.gray)
+                    Text("-\(segment.elevationLoss)m")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.black)
+                }
+            }
+            .padding(.top, 8)
+        }
+        .padding(16)
+        .background(segment.borderColor.opacity(0.1))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(segment.borderColor, lineWidth: 1)
+        )
+    }
+}
+
+struct PDFFuelingCard: View {
+    let station: FuelingStation
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Header
+            Text("Fueling: \(station.name)")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.black)
+            
+            // Metrics
+            HStack(spacing: 15) {
+                Text("Carbs \(station.carbs) g")
+                Text("Sodium \(station.sodium) mg")
+                Text("Water \(station.water) ml")
+            }
+            .font(.system(size: 11, weight: .regular))
+            .foregroundColor(.gray)
+            
+            // Recommendations
+            if !station.recommendations.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(station.recommendations, id: \.self) { rec in
+                        Text("• \(rec)")
+                            .font(.system(size: 11, weight: .regular))
+                            .foregroundColor(.black)
+                    }
+                }
+                .padding(.top, 4)
+            }
+        }
+        .padding(16)
+        .background(Color(red: 0.5, green: 0.2, blue: 0.8).opacity(0.1))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(red: 0.5, green: 0.2, blue: 0.8), lineWidth: 1)
+        )
+    }
+}
+
+struct PDFPacingTipsCard: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Header
+            HStack {
+                Text("Pacing Tips")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(.black)
+            }
+            
+            // Tips
+            VStack(alignment: .leading, spacing: 8) {
+                TipRow(text: "Start slower than you think - the first 25% sets up your entire race")
+                TipRow(text: "Walk the uphills strategically to conserve energy")
+                TipRow(text: "Monitor your effort level, not just pace on varied terrain")
+            }
+        }
+        .padding(16)
+        .background(Color.blue.opacity(0.1))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+        )
+    }
+}
+
+struct PDFNutritionTipsCard: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Header
+            HStack {
+                Text("Nutrition Tips")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(.black)
+            }
+            
+            // Tips
+            VStack(alignment: .leading, spacing: 8) {
+                TipRow(text: "Test all nutrition during training - never try anything new on race day", color: .orange)
+                TipRow(text: "Eat before you're hungry - stay ahead of your calorie deficit", color: .orange)
+                TipRow(text: "Bring extra calories - it's better to have too much than too little", color: .orange)
+            }
+        }
+        .padding(16)
+        .background(Color.orange.opacity(0.1))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+        )
+    }
+}
+
+struct PDFAidStationsSection: View {
+    let aidStations: [AidStation]
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Header
+            Text("Aid Stations & Services")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundColor(.black)
+                .padding(.bottom, 4)
+            
+            // Stations
+            VStack(spacing: 8) {
+                let orderedStations = aidStations.sorted { $0.distance < $1.distance }
+                ForEach(orderedStations) { station in
+                    HStack(alignment: .top, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(station.name)
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(.black)
+                                Spacer()
+                                Text("\(String(format: "%.0f", station.distance))K")
+                                    .font(.system(size: 11, weight: .regular))
+                                    .foregroundColor(.gray)
+                            }
+                            
+                            let activeServices = station.services.filter { $0.isAvailable }
+                            if !activeServices.isEmpty {
+                                HStack(spacing: 6) {
+                                    ForEach(activeServices, id: \.type.rawValue) { service in
+                                        Text(service.type.rawValue)
+                                            .font(.system(size: 9, weight: .medium))
+                                            .foregroundColor(.gray)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Color.gray.opacity(0.1))
+                                            .cornerRadius(4)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding(12)
+                    .background(Color.gray.opacity(0.05))
+                    .cornerRadius(6)
+                }
+            }
+        }
+    }
+}
+
+struct TipRow: View {
+    let text: String
+    var color: Color = .blue
+    
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text("•")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(color)
+                .padding(.top, 2)
+            Text(text)
+                .font(.system(size: 11, weight: .regular))
+                .foregroundColor(.black)
+        }
     }
 }
 
@@ -4178,7 +4880,73 @@ actor RacePlanListCache {
 actor RacePlanDetailCache {
     static let shared = RacePlanDetailCache()
     private var storage: [UUID: CachedRacePlanDetail] = [:]
-    fileprivate func detail(for racePlanId: UUID) -> CachedRacePlanDetail? { storage[racePlanId] }
-    fileprivate func save(detail: CachedRacePlanDetail, for racePlanId: UUID) { storage[racePlanId] = detail }
-    fileprivate func remove(for racePlanId: UUID) { storage[racePlanId] = nil }
+    
+    init() {
+        // Load from UserDefaults on init
+        loadFromUserDefaults()
+    }
+    
+    private func storageKey(for racePlanId: UUID) -> String {
+        "race_plan_detail_cache_\(racePlanId.uuidString)"
+    }
+    
+    private func loadFromUserDefaults() {
+        // Load all cached details from UserDefaults
+        // This is called on init to restore cache after app restart
+        let defaults = UserDefaults.standard
+        let keys = defaults.dictionaryRepresentation().keys.filter { $0.hasPrefix("race_plan_detail_cache_") }
+        
+        for key in keys {
+            guard let data = defaults.data(forKey: key),
+                  let detail = try? JSONDecoder().decode(CachedRacePlanDetail.self, from: data) else {
+                continue
+            }
+            // Extract UUID from key
+            let uuidString = String(key.dropFirst("race_plan_detail_cache_".count))
+            if let uuid = UUID(uuidString: uuidString) {
+                storage[uuid] = detail
+                print("✅ Loaded cached race plan detail for \(uuid.uuidString)")
+            }
+        }
+    }
+    
+    fileprivate func detail(for racePlanId: UUID) -> CachedRacePlanDetail? {
+        // First check in-memory cache
+        if let cached = storage[racePlanId] {
+            return cached
+        }
+        // Fallback to UserDefaults
+        let key = storageKey(for: racePlanId)
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let detail = try? JSONDecoder().decode(CachedRacePlanDetail.self, from: data) else {
+            return nil
+        }
+        // Restore to in-memory cache
+        storage[racePlanId] = detail
+        return detail
+    }
+    
+    fileprivate func save(detail: CachedRacePlanDetail, for racePlanId: UUID) {
+        // Save to in-memory cache
+        storage[racePlanId] = detail
+        
+        // Persist to UserDefaults
+        let key = storageKey(for: racePlanId)
+        do {
+            let data = try JSONEncoder().encode(detail)
+            UserDefaults.standard.set(data, forKey: key)
+            print("✅ Persisted race plan detail cache for \(racePlanId.uuidString)")
+        } catch {
+            print("⚠️ Failed to persist race plan detail cache: \(error)")
+        }
+    }
+    
+    fileprivate func remove(for racePlanId: UUID) {
+        // Remove from in-memory cache
+        storage[racePlanId] = nil
+        
+        // Remove from UserDefaults
+        let key = storageKey(for: racePlanId)
+        UserDefaults.standard.removeObject(forKey: key)
+    }
 }

@@ -10,9 +10,9 @@ struct OnboardingFlowView: View {
     @State private var strategyPreferences = StrategyPreferences()
     @State private var showStrategyResults = false
     @State private var isSavingData = false
-    @State private var showErrorAlert = false
-    @State private var errorMessage = ""
     @State private var isUploadingGPX = false
+    @State private var gpxFileName: String? = nil
+    @State private var gpxFileData: Data? = nil
     
     private let totalSteps = 9
     
@@ -57,7 +57,9 @@ struct OnboardingFlowView: View {
                             UploadGPXView(
                                 onNext: nextStep,
                                 onSkip: nextStep,
-                                onGPXImported: { _, distance in
+                                onGPXImported: { fileName, fileData, distance in
+                                    gpxFileName = fileName
+                                    gpxFileData = fileData
                                     updateFinishDistance(distance)
                                     isUploadingGPX = false
                                 },
@@ -118,11 +120,7 @@ struct OnboardingFlowView: View {
             .animation(.spring(response: 0.4, dampingFraction: 0.85, blendDuration: 0), value: currentStep)
             .animation(.easeInOut(duration: 0.35), value: showStrategyResults)
             .animation(.easeInOut(duration: 0.25), value: isSavingData)
-            .alert("Error Saving Data", isPresented: $showErrorAlert) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(errorMessage)
-            }
+            .withErrorDisplay()
         }
         .keyboardDoneToolbar()
     }
@@ -194,8 +192,7 @@ struct OnboardingFlowView: View {
             
             guard let userId = userId else {
                 print("❌ No user ID available - isAuthenticated: \(session.isAuthenticated), currentUser: \(session.currentUser?.id ?? nil)")
-                errorMessage = "User not authenticated. Please sign in again."
-                showErrorAlert = true
+                ErrorManager.shared.showError(title: "Authentication Required", message: "User not authenticated. Please sign in again.")
                 return
             }
             
@@ -213,9 +210,29 @@ struct OnboardingFlowView: View {
                     preferences: strategyPreferences
                 )
                 
+                // 3. Save GPX file if one was uploaded
+                if let fileName = gpxFileName, let fileData = gpxFileData {
+                    try await SupabaseService.saveGPXFile(
+                        userId: userId,
+                        racePlanId: racePlanId,
+                        fileName: fileName,
+                        fileData: fileData
+                    )
+                    print("✅ GPX file saved to database")
+                }
+                
                 print("✅ All onboarding data saved successfully. Race plan ID: \(racePlanId)")
                 
-                // 3. Mark onboarding as complete
+                // 4. Ensure default fuel types exist
+                do {
+                    try await SupabaseService.ensureDefaultFuelTypes(userId: userId)
+                    print("✅ Default fuel types ensured")
+                } catch {
+                    print("⚠️ Failed to ensure default fuel types: \(error)")
+                    // Don't block onboarding completion if this fails
+                }
+                
+                // 5. Mark onboarding as complete
                 await session.completeOnboarding()
                 
                 // Hide loading overlay before showing results
@@ -230,22 +247,9 @@ struct OnboardingFlowView: View {
                 // Always hide loading overlay on error
                 isSavingData = false
                 
-                // Get detailed error information
-                var detailedError = error.localizedDescription
-                if let supabaseError = error as? DecodingError {
-                    detailedError = "Data encoding error: \(supabaseError)"
-                } else if let urlError = error as? URLError {
-                    detailedError = "Network error: \(urlError.localizedDescription)"
-                } else {
-                    // Try to get more details from the error
-                    let errorDescription = String(describing: error)
-                    detailedError = errorDescription
-                }
-                
-                errorMessage = "Failed to save data: \(detailedError)"
-                showErrorAlert = true
+                // Show user-friendly error using ErrorManager
+                ErrorManager.shared.showError(error, title: "Failed to Save Data")
                 print("❌ Error saving onboarding data: \(error)")
-                print("❌ Error details: \(detailedError)")
                 if let nsError = error as NSError? {
                     print("❌ Error domain: \(nsError.domain), code: \(nsError.code)")
                     print("❌ Error userInfo: \(nsError.userInfo)")

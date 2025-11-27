@@ -10,8 +10,6 @@ struct SignUpModal: View {
     @State private var email = ""
     @State private var password = ""
     @State private var isLoading = false
-    @State private var errorMessage: String?
-    @State private var showError = false
     @State private var showSignInModal = false
     @State private var signInEmail: String = ""
     @State private var showUserExistsMessage = false
@@ -75,14 +73,6 @@ struct SignUpModal: View {
                         }
                         
                         // Error message
-                        if showError, let errorMessage = errorMessage {
-                            HYKAUIAlert(
-                                title: "Sign Up Failed",
-                                description: errorMessage,
-                                variant: .destructive,
-                                icon: "exclamationmark.triangle"
-                            )
-                        }
                         
                         // Sign Up button
                         Button {
@@ -230,13 +220,12 @@ struct SignUpModal: View {
                 onSuccess()
             }
         }
+        .withErrorDisplay()
     }
     
     // MARK: - Functions
     
     private func handleSignUp() async {
-        showError = false
-        errorMessage = nil
         isLoading = true
         
         do {
@@ -275,9 +264,9 @@ struct SignUpModal: View {
                 // Call onUserExists callback if provided
                 onUserExists?()
             } else {
-                // Show error message
-                errorMessage = parseError(error)
-                showError = true
+                // Show error using ErrorManager
+                let userMessage = parseError(error)
+                ErrorManager.shared.showError(title: "Sign Up Failed", message: userMessage)
             }
         }
         
@@ -403,7 +392,6 @@ struct SignUpModal: View {
     
     private func handleGoogleSignUp() async {
         isLoading = true
-        showError = false
         
         do {
             try await session.signInWithGoogle()
@@ -411,8 +399,7 @@ struct SignUpModal: View {
             // Callback will be handled in MainApp via deep link
             print("🔄 Google OAuth flow initiated...")
         } catch {
-            errorMessage = "Failed to initiate Google sign in. Please try again."
-            showError = true
+            ErrorManager.shared.showError(error, title: "Google Sign In Failed")
         }
         
         isLoading = false
@@ -420,7 +407,6 @@ struct SignUpModal: View {
     
     private func handleFacebookSignUp() async {
         isLoading = true
-        showError = false
         
         do {
             try await session.signInWithFacebook()
@@ -428,8 +414,7 @@ struct SignUpModal: View {
             // Callback will be handled in MainApp via deep link
             print("🔄 Facebook OAuth flow initiated...")
         } catch {
-            errorMessage = "Failed to initiate Facebook sign in. Please try again."
-            showError = true
+            ErrorManager.shared.showError(error, title: "Facebook Sign In Failed")
         }
         
         isLoading = false
