@@ -25,7 +25,7 @@ serve(async (req) => {
     return new Response(null, {
       headers: {
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type'
       }
     })
@@ -36,8 +36,58 @@ serve(async (req) => {
   try {
     console.log("🔐 Strava Auth Callback started")
     console.log("   Method:", req.method)
+    console.log("   URL:", req.url)
     
-    // Parse request
+    // Handle GET requests (web redirect from Strava OAuth)
+    if (req.method === 'GET') {
+      const url = new URL(req.url)
+      const code = url.searchParams.get('code')
+      const state = url.searchParams.get('state')
+      const error = url.searchParams.get('error')
+      
+      if (error) {
+        console.error("❌ Strava OAuth error:", error)
+        // Redirect to app with error
+        const appRedirectURL = `com.hyka.app://?error=${encodeURIComponent(error)}`
+        return new Response(null, {
+          status: 302,
+          headers: {
+            'Location': appRedirectURL,
+            'Access-Control-Allow-Origin': '*'
+          }
+        })
+      }
+      
+      if (!code) {
+        console.error("❌ No code in GET request")
+        const appRedirectURL = `com.hyka.app://?error=no_code`
+        return new Response(null, {
+          status: 302,
+          headers: {
+            'Location': appRedirectURL,
+            'Access-Control-Allow-Origin': '*'
+          }
+        })
+      }
+      
+      console.log("✅ Received code from Strava redirect")
+      console.log("   Code:", code.substring(0, 20) + "...")
+      console.log("   State:", state)
+      
+      // Redirect to app with code - app will handle token exchange
+      const appRedirectURL = `com.hyka.app://?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state || 'strava_oauth')}`
+      console.log("🌐 Redirecting to app:", appRedirectURL)
+      
+      return new Response(null, {
+        status: 302,
+        headers: {
+          'Location': appRedirectURL,
+          'Access-Control-Allow-Origin': '*'
+        }
+      })
+    }
+    
+    // Handle POST requests (from iOS app for token exchange)
     const body = await req.json()
     const code = body.code
     const redirectUri = body.redirect_uri || body.redirectUri
@@ -167,7 +217,7 @@ serve(async (req) => {
     const duration = Date.now() - startTime
     console.log(`✅ Auth callback completed in ${duration}ms`)
     
-    // Return tokens in format expected by iOS app
+    // Return tokens in format expected by iOS app (POST request)
     return new Response(JSON.stringify({
       access_token: accessToken,
       refresh_token: refreshToken,

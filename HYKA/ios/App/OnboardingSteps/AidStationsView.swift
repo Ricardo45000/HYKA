@@ -250,13 +250,27 @@ struct AidStationsView: View {
     
     private var aidStationsList: some View {
         VStack(alignment: .leading, spacing: HYKATheme.spacingM) {
-            Text("Your aid stations")
+            Text("Your Aid Stations")
                 .font(HYKATheme.h4)
                 .foregroundColor(HYKATheme.Light.foreground)
             
             VStack(spacing: HYKATheme.spacingM) {
                 ForEach(aidStations) { station in
-                    AidStationCardView(station: station)
+                    HStack {
+                        AidStationCardView(station: station)
+                        
+                        // Delete button
+                        Button(action: {
+                            if let index = aidStations.firstIndex(where: { $0.id == station.id }) {
+                                aidStations.remove(at: index)
+                            }
+                        }) {
+                            Image(systemName: "trash")
+                                .font(.system(size: 16))
+                                .foregroundColor(.red)
+                                .padding(8)
+                        }
+                    }
                 }
             }
         }
@@ -315,9 +329,9 @@ private struct AidStationCardView: View {
             ZStack {
                 Circle()
                     .fill(Color.hykaPurple.opacity(0.12))
-                    .frame(width: 40, height: 40)
+                    .frame(width: 20, height: 20)
                 Image(systemName: "mappin.and.ellipse")
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.system(size: 9, weight: .semibold))
                     .foregroundColor(Color.hykaPurple)
             }
             

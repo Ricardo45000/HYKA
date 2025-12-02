@@ -19,13 +19,11 @@ struct SignUpModal: View {
             GeometryReader { geometry in
                 ScrollView {
                     VStack(spacing: HYKATheme.spacingXXL) {
-                        // HYKA title
-                        Text("HYKA")
-                            .font(.system(size: 51, weight: .black, design: .default))
-                            .fontWidth(.condensed)
-                            .modifier(ForwardSlant(degrees: 10))
-                            .kerning(1)
-                            .foregroundColor(HYKATheme.Light.foreground)
+                        // HYKA logo
+                        Image("Logo-transparent-black")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(height: 120)
                             .padding(.top, max(0, HYKATheme.spacingXXL - geometry.size.height * 0.05))
                     
                     // Create an Account section - centered

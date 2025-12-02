@@ -6,6 +6,16 @@ struct ProfileView: View {
     @EnvironmentObject var session: SessionManager
     @State private var showSignOutAlert = false
     @State private var isSigningOut = false
+    @State private var firstName: String = ""
+    @State private var lastName: String = ""
+    @State private var isLoadingProfile = false
+    
+    var displayName: String {
+        if !firstName.isEmpty || !lastName.isEmpty {
+            return "\(firstName) \(lastName)".trimmingCharacters(in: .whitespaces)
+        }
+        return session.currentUser?.email ?? "User"
+    }
     
     var body: some View {
         NavigationView {
@@ -13,20 +23,15 @@ struct ProfileView: View {
                 VStack(spacing: HYKATheme.spacingXXL) {
                     // User Info Section
                     VStack(spacing: HYKATheme.spacingL) {
-                        // Avatar
-                        ZStack {
-                            Circle()
-                                .fill(Color.hykaPurple.opacity(0.1))
-                                .frame(width: 80, height: 80)
-                            
-                            Image(systemName: "person.fill")
-                                .font(.system(size: 34))
-                                .foregroundColor(Color.hykaPurple)
-                        }
+                        // Logo
+                        Image("Logo-transparent-black")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 80, height: 80)
                         
                         // User details
                         VStack(spacing: HYKATheme.spacingS) {
-                            Text(session.currentUser?.email ?? "User")
+                            Text(displayName)
                                 .font(HYKATheme.h3)
                                 .foregroundColor(HYKATheme.Light.foreground)
                             
@@ -37,7 +42,7 @@ struct ProfileView: View {
                             }
                         }
                     }
-                    .padding(.top, HYKATheme.spacingS) // Reduced by 50% (from spacingL)
+                    .padding(.top, HYKATheme.spacingS * 0.9) // 10% closer to top (reduced by 10%)
                     
                     // Settings Section
                     VStack(spacing: 0) {
@@ -270,6 +275,9 @@ struct ProfileView: View {
                 UINavigationBar.appearance().standardAppearance = appearance
                 UINavigationBar.appearance().scrollEdgeAppearance = appearance
                 UINavigationBar.appearance().compactAppearance = appearance
+                
+                // Load user profile data
+                loadUserProfile()
             }
             .alert("Sign Out", isPresented: $showSignOutAlert) {
                 Button("Cancel", role: .cancel) { }
@@ -288,6 +296,32 @@ struct ProfileView: View {
         isSigningOut = true
         await session.signOut()
         isSigningOut = false
+    }
+    
+    private func loadUserProfile() {
+        guard let userId = session.currentUser?.id else { return }
+        
+        isLoadingProfile = true
+        Task {
+            do {
+                if let profile = try await SupabaseService.fetchUserProfile(userId: userId) {
+                    await MainActor.run {
+                        firstName = profile.firstName
+                        lastName = profile.lastName
+                        isLoadingProfile = false
+                    }
+                } else {
+                    await MainActor.run {
+                        isLoadingProfile = false
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isLoadingProfile = false
+                    print("⚠️ Error loading profile: \(error)")
+                }
+            }
+        }
     }
 }
 

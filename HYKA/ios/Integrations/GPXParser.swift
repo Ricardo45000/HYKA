@@ -28,8 +28,17 @@ final class GPXParser: NSObject, XMLParserDelegate {
     func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String : String] = [:]) {
         currentElement = elementName
         if elementName == "trkpt" {
-            currentLat = Double(attributeDict["lat"] ?? "")
-            currentLon = Double(attributeDict["lon"] ?? "")
+            // Round coordinates to 6 decimal places (~10cm precision) for consistency
+            if let latString = attributeDict["lat"], let lat = Double(latString) {
+                currentLat = round(lat * 1_000_000.0) / 1_000_000.0
+            } else {
+                currentLat = nil
+            }
+            if let lonString = attributeDict["lon"], let lon = Double(lonString) {
+                currentLon = round(lon * 1_000_000.0) / 1_000_000.0
+            } else {
+                currentLon = nil
+            }
             currentEle = nil; currentTime = nil; currentHR = nil
             //misses the elevation here
         }
@@ -39,7 +48,13 @@ final class GPXParser: NSObject, XMLParserDelegate {
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         switch currentElement {
-        case "ele": currentEle = Double(trimmed)
+        case "ele":
+            // Round elevation to 1 decimal place (10cm precision) for consistency
+            if let ele = Double(trimmed) {
+                currentEle = round(ele * 10.0) / 10.0
+            } else {
+                currentEle = nil
+            }
         case "time":
             let iso = ISO8601DateFormatter()
             currentTime = iso.date(from: trimmed)

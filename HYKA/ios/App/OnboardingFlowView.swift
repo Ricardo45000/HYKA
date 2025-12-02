@@ -51,7 +51,7 @@ struct OnboardingFlowView: View {
                             SubscriptionView(onNext: nextStep, onSkip: nextStep)
                                 .tag(4)
                             
-                            ConnectDevicesView(onNext: nextStep, onSkip: nextStep, onBack: previousStep)
+                            ConnectDevicesView(onNext: nextStep, onSkip: {}, onBack: previousStep)
                                 .tag(5)
                             
                             UploadGPXView(

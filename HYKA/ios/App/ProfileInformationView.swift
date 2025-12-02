@@ -276,6 +276,16 @@ struct ProfileInformationView: View {
         .toolbarColorScheme(.light, for: .navigationBar)
         .keyboardDoneToolbar()
         .onAppear {
+            // Set navigation bar title color to black
+            let appearance = UINavigationBarAppearance()
+            appearance.configureWithDefaultBackground()
+            appearance.largeTitleTextAttributes = [.foregroundColor: UIColor.black]
+            appearance.titleTextAttributes = [.foregroundColor: UIColor.black]
+            
+            UINavigationBar.appearance().standardAppearance = appearance
+            UINavigationBar.appearance().scrollEdgeAppearance = appearance
+            UINavigationBar.appearance().compactAppearance = appearance
+            
             loadProfile()
         }
         .withErrorDisplay()

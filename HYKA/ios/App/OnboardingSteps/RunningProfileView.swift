@@ -57,7 +57,7 @@ struct RunningProfileView: View {
                             .font(.system(size: 17, weight: .semibold))
                             .foregroundColor(HYKATheme.Light.foreground)
                         
-                        // Grid layout: 3 columns, rows with 2+2+3 buttons
+                        // Grid layout: 3 rows with 2 options each, Other standalone
                         VStack(spacing: HYKATheme.spacingM) {
                             // First row: 2 buttons
                             HStack(spacing: HYKATheme.spacingM) {
@@ -93,9 +93,9 @@ struct RunningProfileView: View {
                                 }
                             }
                             
-                            // Third row: 3 buttons
+                            // Third row: 2 buttons
                             HStack(spacing: HYKATheme.spacingM) {
-                                ForEach([UserProfile.RunningDistance.hundredM, .multiDay, .other], id: \.self) { distance in
+                                ForEach([UserProfile.RunningDistance.hundredM, .multiDay], id: \.self) { distance in
                                     DistanceButton(
                                         distance: distance,
                                         isSelected: selectedDistances.contains(distance),
@@ -109,6 +109,19 @@ struct RunningProfileView: View {
                                     )
                                 }
                             }
+                            
+                            // Other - standalone on bottom
+                            DistanceButton(
+                                distance: .other,
+                                isSelected: selectedDistances.contains(.other),
+                                action: {
+                                    if selectedDistances.contains(.other) {
+                                        selectedDistances.remove(.other)
+                                    } else {
+                                        selectedDistances.insert(.other)
+                                    }
+                                }
+                            )
                         }
                         
                         if selectedDistances.contains(.other) {
@@ -171,31 +184,25 @@ struct RunningProfileView: View {
                 
                 Spacer(minLength: HYKATheme.spacingXXL)
                 
-                // Buttons
+                // Buttons - consistent design with other steps
                 VStack(spacing: HYKATheme.spacingM) {
-                    Button(action: {
-                        customDistanceFocused = false
-                        userProfile.runningDistances = Array(selectedDistances)
-                        if let level = selectedExperienceLevel {
-                            userProfile.experienceLevel = level
+                    HYKAButton(
+                        title: "Continue",
+                        style: .primary,
+                        action: {
+                            customDistanceFocused = false
+                            userProfile.runningDistances = Array(selectedDistances)
+                            if let level = selectedExperienceLevel {
+                                userProfile.experienceLevel = level
+                            }
+                            if selectedDistances.contains(.other) {
+                                userProfile.customDistance = customDistanceInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                            } else {
+                                userProfile.customDistance = ""
+                            }
+                            onNext()
                         }
-                        if selectedDistances.contains(.other) {
-                            userProfile.customDistance = customDistanceInput.trimmingCharacters(in: .whitespacesAndNewlines)
-                        } else {
-                            userProfile.customDistance = ""
-                        }
-                        onNext()
-                    }) {
-                        Text("Continue")
-                            .font(HYKATheme.button)
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 48)
-                            .background(
-                                RoundedRectangle(cornerRadius: HYKATheme.cornerRadiusM)
-                                    .fill(canContinue ? Color.hykaPurple : Color.gray.opacity(0.3))
-                            )
-                    }
+                    )
                     .disabled(!canContinue)
                     
                     HYKAButton(

@@ -130,12 +130,16 @@ struct HYKAUIInput: View {
                     .font(HYKATheme.input)
                     .foregroundColor(.black) // Typed text in black
                     .textContentType(textContentType)
+                    .autocorrectionDisabled()
+                    .submitLabel(.done)
             } else {
                 TextField(placeholder, text: $text)
                     .font(HYKATheme.input)
                     .foregroundColor(.black) // Typed text in black
                     .keyboardType(keyboardType)
                     .textContentType(textContentType)
+                    .autocorrectionDisabled()
+                    .submitLabel(keyboardType == .emailAddress ? .next : .done)
             }
         }
         .padding(.horizontal, HYKATheme.spacingM)

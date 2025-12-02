@@ -19,13 +19,11 @@ struct AuthView: View {
         NavigationView {
             ScrollView {
                 VStack(spacing: HYKATheme.spacingXXL) {
-                    // HYKA title
-                    Text("HYKA")
-                        .font(.system(size: 51, weight: .black, design: .default))
-                        .fontWidth(.condensed)
-                        .modifier(ForwardSlant(degrees: 10))
-                        .kerning(1)
-                        .foregroundColor(HYKATheme.Light.foreground)
+                    // HYKA logo
+                    Image("Logo-transparent-black")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(height: 120)
                         .padding(.top, HYKATheme.spacingXXL)
                     
                     // Welcome section - centered

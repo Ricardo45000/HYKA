@@ -167,6 +167,24 @@ struct ConnectDevicesView: View {
                 )
                 .padding(.horizontal, HYKATheme.spacingXXL)
                 
+                // Strava data coverage info card
+                VStack(alignment: .leading, spacing: HYKATheme.spacingS) {
+                    Text("Strava provides ~90% of what Garmin or Polar provides for race planning. The main gap is health metrics (weight, VO2 max), which affects athlete analytics accuracy but not core race planning features.")
+                        .font(HYKATheme.body)
+                        .foregroundColor(HYKATheme.Light.foreground)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(HYKATheme.spacingL)
+                .background(
+                    RoundedRectangle(cornerRadius: HYKATheme.cornerRadiusM)
+                        .fill(Color.orange.opacity(0.15))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: HYKATheme.cornerRadiusM)
+                        .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                )
+                .padding(.horizontal, HYKATheme.spacingXXL)
+                
                 Spacer(minLength: HYKATheme.spacingXXL)
                 
                 // Buttons
@@ -178,10 +196,12 @@ struct ConnectDevicesView: View {
                     )
                     
                     HYKAButton(
-                        title: hasConnectedDevices ? "Continue" : "Skip for now",
+                        title: "Continue",
                         style: .primary,
                         action: onNext
                     )
+                    .disabled(!hasConnectedDevices)
+                    .opacity(hasConnectedDevices ? 1.0 : 0.5)
                 }
                 .padding(.horizontal, HYKATheme.spacingXXL)
                 .padding(.bottom, HYKATheme.spacingXXL)

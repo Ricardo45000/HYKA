@@ -18,7 +18,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 // APNs configuration
 const APNS_KEY_ID = Deno.env.get('APNS_KEY_ID')
 const APNS_TEAM_ID = Deno.env.get('APNS_TEAM_ID')
-const APNS_BUNDLE_ID = Deno.env.get('APNS_BUNDLE_ID') || 'com.hyka.app'
+const APNS_BUNDLE_ID = Deno.env.get('APNS_BUNDLE_ID') || 'com.hyka.HYKA'
 const APNS_KEY_PATH = Deno.env.get('APNS_KEY_PATH') // Path to .p8 key file
 const APNS_ENVIRONMENT = Deno.env.get('APNS_ENVIRONMENT') || 'production' // 'development' or 'production'
 
@@ -65,6 +65,7 @@ async function generateAPNsToken(): Promise<string> {
   
   // Temporary implementation - you need to implement proper JWT signing
   // See PUSH_NOTIFICATIONS_SETUP.md for full implementation guide
+  // Note: This function should not be called if APNs is not configured (checked in main handler)
   throw new Error("APNs JWT signing not yet implemented. Please install djwt and implement proper ES256 signing. See PUSH_NOTIFICATIONS_SETUP.md")
 }
 
@@ -210,22 +211,49 @@ serve(async (req) => {
       deep_link: `hyka://activity/${activityId}`
     }
     
-    // 4. Send notifications to all devices
+    // 4. Check if APNs is configured before attempting to send notifications
+    const isAPNsConfigured = !!(APNS_KEY_ID && APNS_TEAM_ID && (APNS_KEY_PATH || Deno.env.get('APNS_KEY_CONTENT')))
+    
+    if (!isAPNsConfigured) {
+      console.log("ℹ️ APNs not configured - skipping push notifications")
+      console.log("   To enable push notifications, configure APNS_KEY_ID, APNS_TEAM_ID, and APNS_KEY_CONTENT")
+      return new Response(JSON.stringify({
+        success: true,
+        message: "APNs not configured - push notifications disabled",
+        devices_notified: 0,
+        devices_failed: 0,
+        total_devices: devices.length,
+        note: "Configure APNS_KEY_ID, APNS_TEAM_ID, and APNS_KEY_CONTENT to enable push notifications"
+      }), {
+        status: 200,
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        }
+      })
+    }
+    
+    // 5. Send notifications to all devices
     let successCount = 0
     let failCount = 0
     
     for (const device of devices) {
       if (device.device_type === 'ios') {
-        const success = await sendAPNsNotification(
-          device.device_token,
-          title,
-          body,
-          deepLinkData
-        )
-        
-        if (success) {
-          successCount++
-        } else {
+        try {
+          const success = await sendAPNsNotification(
+            device.device_token,
+            title,
+            body,
+            deepLinkData
+          )
+          
+          if (success) {
+            successCount++
+          } else {
+            failCount++
+          }
+        } catch (error) {
+          console.error(`❌ Error sending notification to device ${device.device_token.substring(0, 8)}...:`, error)
           failCount++
         }
       } else {
@@ -255,12 +283,18 @@ serve(async (req) => {
     const duration = Date.now() - startTime
     console.error("❌ Error in notification service:", error)
     
+    // Check if it's a configuration error - return 200 instead of 500/503
+    const isConfigError = error.message?.includes('APNS') || 
+                         error.message?.includes('APNs') ||
+                         error.message?.includes('not yet implemented')
+    
     return new Response(JSON.stringify({
       success: false,
       error: error.message,
+      note: isConfigError ? "Push notifications are disabled until APNs is properly configured" : undefined,
       duration: `${duration}ms`
     }), {
-      status: 500,
+      status: isConfigError ? 200 : 500, // Return 200 for config errors to prevent 503
       headers: { 
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*'

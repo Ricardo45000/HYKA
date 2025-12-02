@@ -46,7 +46,7 @@ struct SubscriptionView: View {
             ScrollView {
                 VStack(spacing: HYKATheme.spacingXXL) {
                     // Main Title
-                    Text("Try the very best of HYKA. First month's on us.")
+                    Text("Unlock the full power of HYKA")
                         .font(.system(size: 28, weight: .bold))
                         .foregroundColor(HYKATheme.Light.foreground)
                         .multilineTextAlignment(.center)
@@ -68,10 +68,10 @@ struct SubscriptionView: View {
                             .frame(width: 2, height: 40)
                             .padding(.leading, 4)
                         
-                        // Timeline Item 2: In 28 days
+                        // Timeline Item 2: Features
                         TimelineItem(
-                            timeLabel: "In 28 days:",
-                            description: "Get a reminder about when your trial will end.",
+                            timeLabel: "Features:",
+                            description: "Access all premium features immediately.",
                             isActive: true
                         )
                         
@@ -81,10 +81,10 @@ struct SubscriptionView: View {
                             .frame(width: 2, height: 40)
                             .padding(.leading, 4)
                         
-                        // Timeline Item 3: In 30 days
+                        // Timeline Item 3: Subscription
                         TimelineItem(
-                            timeLabel: "In 30 days:",
-                            description: "You'll be charged the subscription amount. Cancel anytime before.",
+                            timeLabel: "Subscription:",
+                            description: "You'll be charged the subscription amount. Cancel anytime.",
                             isActive: false,
                             showArrow: true
                         )
@@ -96,17 +96,12 @@ struct SubscriptionView: View {
                     
                     // Bottom Section
                     VStack(spacing: HYKATheme.spacingL) {
-                        Text("Free 30-Day Trial")
+                        Text("$9.99/month or $79.99/year ($6.67/mo.)")
                             .font(.system(size: 20, weight: .semibold))
                             .foregroundColor(HYKATheme.Light.foreground)
                         
-                        Text("$9.99/month or $79.99/year ($6.67/mo.) after trial")
-                            .font(.system(size: 15, weight: .regular))
-                            .foregroundColor(HYKATheme.Light.mutedForeground)
-                            .multilineTextAlignment(.center)
-                        
                         Button(action: onNext) {
-                            Text("Start free trial")
+                            Text("Continue")
                                 .font(.system(size: 17, weight: .semibold))
                                 .foregroundColor(.white)
                                 .frame(maxWidth: .infinity)
@@ -114,12 +109,6 @@ struct SubscriptionView: View {
                                 .background(Color.hykaPurple)
                                 .cornerRadius(HYKATheme.cornerRadiusM)
                         }
-                        
-                        Text("You won't be charged until the trial ends. Cancel anytime up to 24hrs before your trial ends.")
-                            .font(.system(size: 12, weight: .regular))
-                            .foregroundColor(HYKATheme.Light.mutedForeground)
-                            .multilineTextAlignment(.center)
-                            .padding(.top, HYKATheme.spacingS)
                     }
                     .padding(.horizontal, HYKATheme.spacingXXL)
                     .padding(.bottom, HYKATheme.spacingXXL)

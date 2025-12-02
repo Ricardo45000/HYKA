@@ -82,6 +82,8 @@
 	</dict>
 	<key>NSHealthShareUsageDescription</key>
 	<string>HYKA needs access to your health data to track your workouts, VO2 max, heart rate, sleep, and other fitness metrics to provide personalized race strategies and training insights.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>HYKA needs permission to save your workout data, race plans, and fitness metrics to HealthKit so you can track your progress and view your data in the Health app.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

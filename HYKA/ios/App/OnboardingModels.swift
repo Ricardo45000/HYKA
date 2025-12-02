@@ -170,7 +170,11 @@ extension NutritionPlan {
 
 extension DeviceConnection {
     static let mock = [
-        DeviceConnection(name: "Garmin", icon: "GarminIcon", isConnected: false)
+        DeviceConnection(name: "Garmin", icon: "GarminIcon", isConnected: false),
+        DeviceConnection(name: "Strava", icon: "StravaIcon", isConnected: false),
+        DeviceConnection(name: "Polar", icon: "PolarIcon", isConnected: false),
+        DeviceConnection(name: "Coros", icon: "CorosIcon", isConnected: false),
+        DeviceConnection(name: "Suunto", icon: "SuuntoIcon", isConnected: false)
     ]
 }
 

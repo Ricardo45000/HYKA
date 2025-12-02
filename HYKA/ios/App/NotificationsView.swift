@@ -29,6 +29,8 @@ struct NotificationsView: View {
                             
                             Toggle("", isOn: $notificationsEnabled)
                                 .tint(Color.hykaPurple)
+                                .labelsHidden()
+                                .scaleEffect(1.2)
                         }
                         .padding(.horizontal, HYKATheme.spacingXXL)
                         .padding(.vertical, HYKATheme.spacingL)
@@ -52,6 +54,17 @@ struct NotificationsView: View {
         .navigationTitle("Notifications")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.light, for: .navigationBar)
+        .onAppear {
+            // Set navigation bar title color to black
+            let appearance = UINavigationBarAppearance()
+            appearance.configureWithDefaultBackground()
+            appearance.largeTitleTextAttributes = [.foregroundColor: UIColor.black]
+            appearance.titleTextAttributes = [.foregroundColor: UIColor.black]
+            
+            UINavigationBar.appearance().standardAppearance = appearance
+            UINavigationBar.appearance().scrollEdgeAppearance = appearance
+            UINavigationBar.appearance().compactAppearance = appearance
+        }
     }
 }
 

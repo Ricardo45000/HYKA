@@ -18,21 +18,27 @@ private final class KeyboardDismissCoordinator: NSObject, UIGestureRecognizerDel
         guard tapRecognizer == nil, panRecognizer == nil else { return }
         hostView = view
         
+        // Only add tap recognizer - pan can cause delays
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleGesture))
         tap.cancelsTouchesInView = false
         tap.delegate = self
+        // Lower priority to not interfere with text field taps
+        tap.delaysTouchesBegan = false
+        tap.delaysTouchesEnded = false
         view.addGestureRecognizer(tap)
         tapRecognizer = tap
-        
-        let pan = UIPanGestureRecognizer(target: self, action: #selector(handleGesture))
-        pan.cancelsTouchesInView = false
-        pan.delegate = self
-        view.addGestureRecognizer(pan)
-        panRecognizer = pan
     }
     
     @objc private func handleGesture() {
         endEditing()
+    }
+    
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        // Don't intercept touches on interactive elements (buttons, text fields, etc.)
+        if let view = touch.view {
+            return !(view is UIControl) && !(view.superview is UIControl)
+        }
+        return true
     }
     
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -48,6 +54,8 @@ private struct KeyboardDismissInstaller: UIViewRepresentable {
     func makeUIView(context: Context) -> UIView {
         let view = UIView(frame: .zero)
         view.backgroundColor = .clear
+        view.isUserInteractionEnabled = false // Don't intercept touches, just install gesture recognizers
+        // Use async to avoid blocking initial layout
         DispatchQueue.main.async {
             if let superview = view.superview {
                 context.coordinator.attach(to: superview)
@@ -57,7 +65,8 @@ private struct KeyboardDismissInstaller: UIViewRepresentable {
     }
     
     func updateUIView(_ uiView: UIView, context: Context) {
-        if let superview = uiView.superview {
+        // Only attach if not already attached to avoid duplicate recognizers
+        if context.coordinator.tapRecognizer == nil, let superview = uiView.superview {
             context.coordinator.attach(to: superview)
         }
     }

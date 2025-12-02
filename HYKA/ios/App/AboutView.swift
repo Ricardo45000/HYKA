@@ -66,8 +66,12 @@ struct AboutView: View {
                         .foregroundColor(HYKATheme.Light.foreground)
                     
                     VStack(alignment: .leading, spacing: HYKATheme.spacingS) {
-                        ContactRow(icon: "globe", text: "https://hyka.app")
-                        ContactRow(icon: "envelope", text: "support@hyka.app")
+                        Link(destination: URL(string: "https://hyka.app")!) {
+                            ContactRow(icon: "globe", text: "https://hyka.app")
+                        }
+                        Link(destination: URL(string: "mailto:moritz@hyka.app")!) {
+                            ContactRow(icon: "envelope", text: "moritz@hyka.app")
+                        }
                     }
                 }
                 .padding(.horizontal, HYKATheme.spacingXXL)
@@ -84,6 +88,17 @@ struct AboutView: View {
         .navigationTitle("About")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.light, for: .navigationBar)
+        .onAppear {
+            // Set navigation bar title color to black
+            let appearance = UINavigationBarAppearance()
+            appearance.configureWithDefaultBackground()
+            appearance.largeTitleTextAttributes = [.foregroundColor: UIColor.black]
+            appearance.titleTextAttributes = [.foregroundColor: UIColor.black]
+            
+            UINavigationBar.appearance().standardAppearance = appearance
+            UINavigationBar.appearance().scrollEdgeAppearance = appearance
+            UINavigationBar.appearance().compactAppearance = appearance
+        }
     }
 }
 

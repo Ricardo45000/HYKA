@@ -72,27 +72,52 @@ final class SupabaseService {
             data = parsed
         }
         
-        guard let data = data,
-              let firstName = data["first_name"] as? String,
-              let lastName = data["last_name"] as? String,
-              let birthDateString = data["birth_date"] as? String,
-              let birthDate = ISO8601DateFormatter().date(from: birthDateString),
-              let genderString = data["gender"] as? String,
-              let gender = UserProfile.Gender(rawValue: genderString),
-              let runningDistancesStrings = data["running_distances"] as? [String],
-              let experienceLevelString = data["experience_level"] as? String,
-              let experienceLevel = UserProfile.ExperienceLevel(rawValue: experienceLevelString) else {
+        guard let data = data else {
             return nil
         }
         
+        // Handle nullable fields - use empty strings if null
+        let firstName = (data["first_name"] as? String) ?? ""
+        let lastName = (data["last_name"] as? String) ?? ""
+        
+        // Parse birth date - handle nullable
+        let birthDate: Date
+        if let birthDateString = data["birth_date"] as? String,
+           let parsedDate = ISO8601DateFormatter().date(from: birthDateString) {
+            birthDate = parsedDate
+        } else {
+            birthDate = Date() // Default to today if not set
+        }
+        
+        // Parse gender - handle nullable
+        let gender: UserProfile.Gender
+        if let genderString = data["gender"] as? String,
+           let parsedGender = UserProfile.Gender(rawValue: genderString) {
+            gender = parsedGender
+        } else {
+            gender = .preferNotToSay // Default if not set
+        }
+        
+        // Parse running distances - handle nullable
         var runningDistances: [UserProfile.RunningDistance] = []
         var customDistance = ""
-        for value in runningDistancesStrings {
-            if value.lowercased().hasPrefix("other:") {
-                customDistance = value.replacingOccurrences(of: "Other:", with: "", options: [.caseInsensitive])
-            } else if let distance = UserProfile.RunningDistance(rawValue: value) {
-                runningDistances.append(distance)
+        if let runningDistancesStrings = data["running_distances"] as? [String] {
+            for value in runningDistancesStrings {
+                if value.lowercased().hasPrefix("other:") {
+                    customDistance = value.replacingOccurrences(of: "Other:", with: "", options: [.caseInsensitive])
+                } else if let distance = UserProfile.RunningDistance(rawValue: value) {
+                    runningDistances.append(distance)
+                }
             }
+        }
+        
+        // Parse experience level - handle nullable
+        let experienceLevel: UserProfile.ExperienceLevel
+        if let experienceLevelString = data["experience_level"] as? String,
+           let parsedLevel = UserProfile.ExperienceLevel(rawValue: experienceLevelString) {
+            experienceLevel = parsedLevel
+        } else {
+            experienceLevel = .beginner // Default if not set
         }
         
         return UserProfile(
@@ -382,7 +407,9 @@ final class SupabaseService {
         
         if let existingRacePlanId = racePlanId {
             finalRacePlanId = existingRacePlanId
+            print("📋 Using existing race plan ID: \(finalRacePlanId.uuidString)")
         } else {
+            print("📋 Creating new race plan for GPX file")
             // Create a new race plan for this GPX file
             let racePlanData = RacePlanData(
                 userId: userId.uuidString,
@@ -402,10 +429,17 @@ final class SupabaseService {
                let idString = json["id"] as? String,
                let id = UUID(uuidString: idString) {
                 finalRacePlanId = id
+                print("✅ Created new race plan with ID: \(finalRacePlanId.uuidString)")
             } else {
+                print("❌ Failed to parse race plan ID from response")
+                if let jsonString = String(data: response.data, encoding: .utf8) {
+                    print("❌ Response: \(jsonString)")
+                }
                 throw NSError(domain: "SupabaseService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to parse race plan ID from response"])
             }
         }
+        
+        print("📋 Final race plan ID to update: \(finalRacePlanId.uuidString)")
         
         // Upload GPX file to Supabase Storage instead of storing in database
         // This prevents statement timeout errors for large files
@@ -441,11 +475,32 @@ final class SupabaseService {
                 updatedAt: ISO8601DateFormatter().string(from: Date())
             )
             
-            try await Supa.client
+            print("📝 Updating race plan \(finalRacePlanId.uuidString) with GPX metadata:")
+            print("   - File name: \(fileName)")
+            print("   - File URL: \(fileURL.absoluteString)")
+            
+            let updateResponse = try await Supa.client
                 .from("race_plans")
                 .update(updateData)
                 .eq("id", value: finalRacePlanId.uuidString)
+                .select()
                 .execute()
+            
+            // Verify the update was successful
+            if let json = try? JSONSerialization.jsonObject(with: updateResponse.data, options: []) as? [String: Any] {
+                print("✅ Update response: \(json)")
+            } else if let jsonArray = try? JSONSerialization.jsonObject(with: updateResponse.data, options: []) as? [[String: Any]],
+                      let first = jsonArray.first {
+                print("✅ Update response (array): \(first)")
+                if let updatedFileName = first["gpx_file_name"] as? String,
+                   let updatedFileData = first["gpx_file_data"] as? String {
+                    print("✅ Verified: gpx_file_name = '\(updatedFileName)', gpx_file_data = '\(updatedFileData.prefix(50))...'")
+                } else {
+                    print("⚠️ Warning: GPX fields not found in update response")
+                }
+            } else {
+                print("⚠️ Warning: Could not parse update response")
+            }
             
             print("✅ GPX file metadata saved to race plan")
             
@@ -488,16 +543,38 @@ final class SupabaseService {
                 updatedAt: ISO8601DateFormatter().string(from: Date())
             )
             
+            print("📝 Updating race plan \(finalRacePlanId.uuidString) with GPX data (fallback):")
+            print("   - File name: \(fileName)")
+            print("   - Data size: \(base64Data.count) characters (base64)")
+            
             do {
-                try await Supa.client
+                let updateResponse = try await Supa.client
                     .from("race_plans")
                     .update(updateData)
                     .eq("id", value: finalRacePlanId.uuidString)
+                    .select()
                     .execute()
+                
+                // Verify the update was successful
+                if let json = try? JSONSerialization.jsonObject(with: updateResponse.data, options: []) as? [String: Any] {
+                    print("✅ Update response: \(json)")
+                    if let updatedFileName = json["gpx_file_name"] as? String,
+                       let updatedFileData = json["gpx_file_data"] as? String {
+                        print("✅ Verified: gpx_file_name = '\(updatedFileName)', gpx_file_data length = \(updatedFileData.count)")
+                    }
+                } else if let jsonArray = try? JSONSerialization.jsonObject(with: updateResponse.data, options: []) as? [[String: Any]],
+                          let first = jsonArray.first {
+                    print("✅ Update response (array): \(first)")
+                    if let updatedFileName = first["gpx_file_name"] as? String,
+                       let updatedFileData = first["gpx_file_data"] as? String {
+                        print("✅ Verified: gpx_file_name = '\(updatedFileName)', gpx_file_data length = \(updatedFileData.count)")
+                    }
+                }
                 
                 print("✅ GPX file saved to database (fallback)")
             } catch {
                 print("❌ Database fallback also failed: \(error)")
+                print("❌ Error details: \(error.localizedDescription)")
                 throw NSError(
                     domain: "SupabaseService",
                     code: -1,
@@ -532,13 +609,19 @@ final class SupabaseService {
     static func makeTrackPoints(from rawPoints: [GPXTrackPoint]) -> [TrackPoint] {
         var trackPoints: [TrackPoint] = []
         var cumulativeDistance: Double = 0
+        // Process points in order to ensure deterministic results
         for raw in rawPoints {
             guard let lat = raw.lat, let lon = raw.lon else { continue }
+            // Round coordinates to reasonable precision to avoid floating point inconsistencies
+            let roundedLat = round(lat * 1_000_000.0) / 1_000_000.0 // 6 decimal places (~10cm precision)
+            let roundedLon = round(lon * 1_000_000.0) / 1_000_000.0
             let elevation = raw.ele ?? trackPoints.last?.ele ?? 0
             if let previous = trackPoints.last {
-                cumulativeDistance += haversineDistance(lat1: previous.lat, lon1: previous.lon, lat2: lat, lon2: lon)
+                let segmentDistance = haversineDistance(lat1: previous.lat, lon1: previous.lon, lat2: roundedLat, lon2: roundedLon)
+                // Round cumulative distance to avoid floating point accumulation errors
+                cumulativeDistance = round((cumulativeDistance + segmentDistance) * 100.0) / 100.0 // Round to 2 decimal places (1cm precision)
             }
-            trackPoints.append(TrackPoint(lat: lat, lon: lon, ele: elevation, distFromStart: cumulativeDistance, hr: raw.hr))
+            trackPoints.append(TrackPoint(lat: roundedLat, lon: roundedLon, ele: elevation, distFromStart: cumulativeDistance, hr: raw.hr))
         }
         return trackPoints
     }
@@ -570,14 +653,16 @@ final class SupabaseService {
         }
         let startPoint = trackPoints[startIndex]
         let endPoint = trackPoints[endIndex]
-        let segmentDistanceM = max(0, endPoint.distFromStart - startPoint.distFromStart)
+        // Round segment distance to 2 decimal places (1cm precision) for consistency
+        let segmentDistanceM = round(max(0, endPoint.distFromStart - startPoint.distFromStart) * 100.0) / 100.0
         var gain: Double = 0
         var loss: Double = 0
         var hrTotal: Double = 0
         var hrCount: Double = 0
         for idx in (startIndex + 1)...endIndex {
-            let previous = trackPoints[idx - 1].ele
-            let current = trackPoints[idx].ele
+            // Round elevation values to ensure consistent calculations
+            let previous = round(trackPoints[idx - 1].ele * 10.0) / 10.0
+            let current = round(trackPoints[idx].ele * 10.0) / 10.0
             let delta = current - previous
             if delta > 0 {
                 gain += delta
@@ -589,9 +674,14 @@ final class SupabaseService {
                 hrCount += 1
             }
         }
+        // Round elevation gain/loss to 1 decimal place for consistency
+        gain = round(gain * 10.0) / 10.0
+        loss = round(loss * 10.0) / 10.0
         let distanceKm = segmentDistanceM / 1000.0
-        let estimatedTimeSeconds = distanceKm * paceSecondsPerKm
-        let averageHR = hrCount > 0 ? hrTotal / hrCount : nil
+        // Round estimated time to nearest second for consistency
+        let estimatedTimeSeconds = round(distanceKm * paceSecondsPerKm)
+        // Round average HR to nearest integer for consistency, then convert to Double
+        let averageHR = hrCount > 0 ? Double(round(hrTotal / hrCount)) : nil
         return AidStationSegmentMetrics(segmentDistanceM: segmentDistanceM, elevationGainM: gain, elevationLossM: loss, estimatedTimeSeconds: estimatedTimeSeconds, averageHeartRate: averageHR)
     }
     
@@ -600,11 +690,14 @@ final class SupabaseService {
             return ([], [])
         }
         let totalDistanceKm = totalDistance / 1000.0
-        let intermediateCheckpointCount = max(0, min(6, Int(totalDistanceKm / 25.0)))
+        // Calculate checkpoint count deterministically with rounding
+        let intermediateCheckpointCount = max(0, min(6, Int(round(totalDistanceKm / 25.0))))
         var checkpointIndices: [Int] = [0]
         if intermediateCheckpointCount > 0 {
             for i in 1...intermediateCheckpointCount {
-                let targetDistance = totalDistance * Double(i) / Double(intermediateCheckpointCount + 1)
+                // Calculate target distance deterministically with explicit rounding
+                let fraction = Double(i) / Double(intermediateCheckpointCount + 1)
+                let targetDistance = round(totalDistance * fraction * 100.0) / 100.0 // Round to 2 decimal places for consistency
                 let nearestIndex = nearestTrackPointIndex(to: targetDistance, in: trackPoints)
                 if nearestIndex != checkpointIndices.last {
                     checkpointIndices.append(nearestIndex)
@@ -686,7 +779,9 @@ final class SupabaseService {
                 cos(lat2 * Double.pi / 180.0) *
                 sin(dLon / 2) * sin(dLon / 2)
         let c = 2 * atan2(sqrt(a), sqrt(1 - a))
-        return earthRadius * c
+        let distance = earthRadius * c
+        // Round to 2 decimal places (1cm precision) for consistency
+        return round(distance * 100.0) / 100.0
     }
     /// Save race plan with aid stations and preferences
     static func saveRacePlan(

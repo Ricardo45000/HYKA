@@ -81,16 +81,20 @@ final class DeviceOAuthManager: ObservableObject {
             connectionSaved = true
             print("✅ OAuth connection saved for \(provider)")
             
-            // For Garmin: Trigger server-side historical backfill
+            // For Garmin: Trigger server-side historical backfill (30 days)
+            // This happens automatically after user successfully connects and agrees to share data
             if provider.lowercased() == "garmin" {
                 do {
-                    print("🔄 Triggering Garmin historical backfill (last 90 days)...")
+                    print("🔄 Triggering Garmin historical sync (last 30 days)...")
+                    print("   User has agreed to share data - fetching historical activities")
                     try await triggerGarminHistoricalBackfill(userId: userId)
-                    print("✅ Historical backfill triggered successfully")
+                    print("✅ Historical sync requested successfully")
+                    print("   Activities will arrive via webhooks within 15-60 minutes")
                 } catch {
-                    print("⚠️ Error triggering historical backfill: \(error)")
+                    print("⚠️ Error triggering historical sync: \(error)")
                     print("   User can manually sync or wait for hourly cron job")
                     // Don't show error to user - this is a background operation
+                    // Connection is still successful even if historical sync fails
                 }
             } else {
                 // For other providers: fetch data client-side (old approach)
@@ -161,6 +165,11 @@ final class DeviceOAuthManager: ObservableObject {
         case "polar":
             let (accessToken, refreshToken, expiresAt) = try await performPolarOAuth(from: viewController)
             return (accessToken, refreshToken, nil, expiresAt) // OAuth 2.0 doesn't have token secret
+            
+        case "strava":
+            // Strava uses OAuth 2.0
+            let (accessToken, refreshToken, expiresAt) = try await performStravaOAuth(from: viewController)
+            return (accessToken, refreshToken, nil, expiresAt) // OAuth 2.0: no token secret
             
         default:
             throw DeviceOAuthError.unknownProvider(provider)
@@ -774,6 +783,185 @@ final class DeviceOAuthManager: ObservableObject {
         }
     }
     
+    private func performStravaOAuth(from viewController: UIViewController) async throws -> (accessToken: String, refreshToken: String?, expiresAt: Date?) {
+        // Strava OAuth 2.0
+        let stravaClientId = Config.stravaClientID
+        let redirectURI = Config.stravaRedirectURI
+        
+        print("🔄 Strava OAuth 2.0 Flow")
+        print("   Client ID: \(stravaClientId)")
+        print("   Redirect URI: \(redirectURI)")
+        
+        // Strava OAuth authorization endpoint
+        // Reference: https://developers.strava.com/docs/authentication/
+        // Use same pattern as Garmin - URLComponents handles encoding properly
+        var authURLComponents = URLComponents(string: "https://www.strava.com/oauth/authorize")!
+        authURLComponents.queryItems = [
+            URLQueryItem(name: "client_id", value: stravaClientId),
+            URLQueryItem(name: "redirect_uri", value: redirectURI),
+            URLQueryItem(name: "response_type", value: "code"),
+            URLQueryItem(name: "scope", value: "activity:read_all,profile:read_all"),
+            URLQueryItem(name: "approval_prompt", value: "force"),
+            URLQueryItem(name: "state", value: "strava_oauth")
+        ]
+        
+        guard let authURL = authURLComponents.url else {
+            throw DeviceOAuthError.invalidURL
+        }
+        
+        print("🔐 Strava Authorization URL: \(authURL.absoluteString)")
+        print("   Redirect URI: \(redirectURI)")
+        print("   ⚠️ IMPORTANT: Check Strava settings:")
+        print("      - Authorization Callback Domain MUST be: com.hyka.app")
+        print("      - Make sure you clicked 'Save' in Strava")
+        print("      - Wait 1-2 minutes after saving for changes to take effect")
+        
+        // Log the exact query string to see how redirect_uri is encoded
+        if let query = authURL.query {
+            print("   Full query string: \(query)")
+            if let redirectParam = query.components(separatedBy: "&").first(where: { $0.hasPrefix("redirect_uri=") }) {
+                print("   redirect_uri in query: \(redirectParam)")
+            }
+        }
+        
+        // Create presentation context provider
+        let presentationProvider = AuthPresentationContextProvider(viewController: viewController)
+        
+        // Open in Safari/ASWebAuthenticationSession
+        // When using web redirect, Strava redirects to web URL, edge function redirects to app
+        // So we still use the app scheme for the callback
+        let callbackURL = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
+            // Always use app scheme for callback (edge function redirects to this)
+            let callbackScheme = "com.hyka.app"
+            
+            let authSession = ASWebAuthenticationSession(
+                url: authURL,
+                callbackURLScheme: callbackScheme
+            ) { callbackURL, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                
+                guard let callbackURL = callbackURL else {
+                    continuation.resume(throwing: DeviceOAuthError.invalidCallback)
+                    return
+                }
+                
+                continuation.resume(returning: callbackURL)
+            }
+            
+            authSession.presentationContextProvider = presentationProvider
+            authSession.prefersEphemeralWebBrowserSession = false
+            
+            if !authSession.start() {
+                continuation.resume(throwing: DeviceOAuthError.invalidURL)
+            }
+            
+            // Keep references to prevent deallocation
+            objc_setAssociatedObject(viewController, "stravaAuthSession", authSession, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            objc_setAssociatedObject(viewController, "stravaAuthPresentationProvider", presentationProvider, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        }
+        
+        print("✅ Received Strava callback: \(callbackURL.absoluteString)")
+        
+        // Extract authorization code (same pattern as Garmin)
+        guard let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false) else {
+            print("❌ Failed to parse callback URL into components")
+            throw DeviceOAuthError.invalidCallback
+        }
+        
+        print("📋 Query items: \(components.queryItems?.map { "\($0.name)=\($0.value ?? "nil")" }.joined(separator: "&") ?? "none")")
+        
+        guard let code = components.queryItems?.first(where: { $0.name == "code" })?.value else {
+            print("❌ No 'code' parameter found in Strava callback URL")
+            print("   Available parameters: \(components.queryItems?.map { $0.name }.joined(separator: ", ") ?? "none")")
+            throw DeviceOAuthError.invalidCallback
+        }
+        
+        print("✅ Strava authorization code: \(code.prefix(20))...")
+        
+        // Exchange code for access token via Supabase Edge Function
+        // This keeps the client_secret secure on the server
+        let edgeFunctionURL = URL(string: Config.stravaAuthCallbackURL)!
+        var request = URLRequest(url: edgeFunctionURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        // Add Supabase anon key for authentication
+        let supabaseAnonKey = Config.supabaseAnonKey
+        request.setValue("Bearer \(supabaseAnonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
+        
+        // Get user's Supabase user ID
+        let userId: String
+        do {
+            let session = try await Supa.client.auth.session
+            userId = session.user.id.uuidString
+            print("🔑 Using user's Supabase user ID: \(userId)")
+        } catch {
+            print("❌ Could not get user session")
+            throw DeviceOAuthError.tokenExchangeFailed
+        }
+        
+        // Request body with code, redirect_uri, and user_id
+        let requestBody: [String: Any] = [
+            "code": code,
+            "redirect_uri": redirectURI,
+            "user_id": userId
+        ]
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        
+        print("📤 Exchanging Strava code via edge function...")
+        print("   URL: \(edgeFunctionURL.absoluteString)")
+        print("   User ID: \(userId)")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            print("❌ Strava token exchange: Invalid response type")
+            throw DeviceOAuthError.tokenExchangeFailed
+        }
+        
+        print("📡 Strava token exchange response:")
+        print("   Status Code: \(httpResponse.statusCode)")
+        
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let errorData = String(data: data, encoding: .utf8) ?? "Unable to decode error response"
+            print("❌ Strava token exchange error (status \(httpResponse.statusCode)):")
+            print("   Response: \(errorData)")
+            throw DeviceOAuthError.tokenExchangeFailed
+        }
+        
+        // Parse JSON response
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let accessToken = json["access_token"] as? String else {
+            print("❌ Failed to parse Strava token response")
+            let responseString = String(data: data, encoding: .utf8) ?? "Unable to decode"
+            print("   Response: \(responseString)")
+            throw DeviceOAuthError.tokenExchangeFailed
+        }
+        
+        let refreshToken = json["refresh_token"] as? String
+        let expiresAt: Date?
+        
+        if let expiresAtTimestamp = json["expires_at"] as? Int {
+            // Strava provides expires_at as Unix timestamp
+            expiresAt = Date(timeIntervalSince1970: TimeInterval(expiresAtTimestamp))
+        } else {
+            expiresAt = nil
+        }
+        
+        print("✅ Strava tokens received")
+        print("   Access token: \(accessToken.prefix(20))...")
+        if let expiresAt = expiresAt {
+            print("   Expires at: \(expiresAt)")
+        }
+        
+        return (accessToken, refreshToken, expiresAt)
+    }
+    
     private func exchangePolarCode(code: String, clientId: String, clientSecret: String, redirectURI: String) async throws -> (accessToken: String, refreshToken: String?, expiresAt: Date?) {
         // Polar API token endpoint
         // Reference: https://www.polar.com/accesslink-api/#authentication
@@ -1004,21 +1192,68 @@ final class DeviceOAuthManager: ObservableObject {
         print("✅ Training data pushed to database for \(provider)")
     }
     
-    /// Historical backfill is now handled via Garmin webhooks
-    /// For historical data, use Garmin Developer Portal's backfill tool
-    /// Webhooks will automatically fetch activities as they're processed
+    /// Trigger historical backfill for last 30 days of Garmin activities
+    /// This is called automatically when user connects their Garmin account
     private func triggerGarminHistoricalBackfill(userId: UUID) async throws {
-        print("ℹ️ Garmin historical backfill:")
-        print("   Historical data is now synced via Garmin webhooks")
-        print("   For bulk historical backfill, use Garmin Developer Portal's backfill tool")
-        print("   Activities will be automatically fetched via webhook flow (garmin-activity-ping → pull → store)")
+        print("🔄 Triggering Garmin historical backfill (last 30 days)...")
         
-        // Note: The webhook flow handles all activities including historical ones
-        // when triggered by Garmin's backfill tool in the Developer Portal
-        // No manual API call needed - webhooks are automatic
+        guard let session = session else {
+            throw DeviceOAuthError.notAuthenticated
+        }
         
-        // Return success immediately - webhooks will handle the sync
-        return
+        // Get Supabase URL and anon key from config
+        let supabaseUrl = Config.supabaseURL
+        let supabaseAnonKey = Config.supabaseAnonKey
+        
+        // Get user's Supabase JWT token for authentication
+        let supabaseJWT: String
+        do {
+            let supabaseSession = try await Supa.client.auth.session
+            supabaseJWT = supabaseSession.accessToken
+        } catch {
+            print("⚠️ Could not get Supabase session, using anon key")
+            supabaseJWT = supabaseAnonKey
+        }
+        
+        // Call the historical sync edge function
+        let syncUrl = URL(string: "\(supabaseUrl)/functions/v1/garmin-historical-sync")!
+        var request = URLRequest(url: syncUrl)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(supabaseJWT)", forHTTPHeaderField: "Authorization")
+        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
+        
+        let requestBody: [String: Any] = [
+            "user_id": userId.uuidString
+        ]
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        
+        print("📡 Calling garmin-historical-sync edge function...")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw DeviceOAuthError.invalidResponse
+        }
+        
+        if (200...299).contains(httpResponse.statusCode) {
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let success = json["success"] as? Bool, success {
+                print("✅ Historical sync requested successfully")
+                if let message = json["message"] as? String {
+                    print("   \(message)")
+                }
+                if let note = json["note"] as? String {
+                    print("   Note: \(note)")
+                }
+            } else {
+                print("⚠️ Historical sync response received but format unexpected")
+            }
+        } else {
+            let errorString = String(data: data, encoding: .utf8) ?? "Unknown error"
+            print("⚠️ Historical sync request returned status \(httpResponse.statusCode): \(errorString)")
+            // Don't throw - this is a background operation, connection is still successful
+        }
     }
 }
 

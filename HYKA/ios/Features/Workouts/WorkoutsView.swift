@@ -218,23 +218,42 @@ struct WearableConnectionsView: View {
     }
     
     private var whyConnectSection: some View {
-        VStack(alignment: .leading, spacing: HYKATheme.spacingM) {
-            Text("Why connect?")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(Color.hykaPurple)
-            
-            VStack(alignment: .leading, spacing: HYKATheme.spacingS) {
-                bulletPoint(text: "Training history and fitness metrics")
-                bulletPoint(text: "VO2 max and performance data")
-                bulletPoint(text: "Personalized race strategies")
+        VStack(alignment: .leading, spacing: HYKATheme.spacingL) {
+            VStack(alignment: .leading, spacing: HYKATheme.spacingM) {
+                Text("Why connect?")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(Color.hykaPurple)
+                
+                VStack(alignment: .leading, spacing: HYKATheme.spacingS) {
+                    bulletPoint(text: "Training history and fitness metrics")
+                    bulletPoint(text: "VO2 max and performance data")
+                    bulletPoint(text: "Personalized race strategies")
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(HYKATheme.spacingL)
+            .background(
+                RoundedRectangle(cornerRadius: HYKATheme.cornerRadiusM)
+                    .fill(Color.hykaPurple.opacity(0.1))
+            )
+            
+            // Strava data coverage info card
+            VStack(alignment: .leading, spacing: HYKATheme.spacingS) {
+                Text("Strava provides ~90% of what Garmin or Polar provides for race planning. The main gap is health metrics (weight, VO2 max), which affects athlete analytics accuracy but not core race planning features.")
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundColor(HYKATheme.Light.foreground)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(HYKATheme.spacingL)
+            .background(
+                RoundedRectangle(cornerRadius: HYKATheme.cornerRadiusM)
+                    .fill(Color.orange.opacity(0.15))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: HYKATheme.cornerRadiusM)
+                    .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+            )
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(HYKATheme.spacingL)
-        .background(
-            RoundedRectangle(cornerRadius: HYKATheme.cornerRadiusM)
-                .fill(Color.hykaPurple.opacity(0.1))
-        )
     }
     
     private func bulletPoint(text: String) -> some View {

@@ -48,6 +48,9 @@ struct OnboardingStepProfileDetailsView: View {
                             TextField("First name", text: $firstName)
                                 .font(HYKATheme.input)
                                 .foregroundColor(.black) // Typed text in black
+                                .textInputAutocapitalization(.words)
+                                .autocorrectionDisabled()
+                                .submitLabel(.next)
                                 .padding(.horizontal, HYKATheme.spacingM)
                                 .padding(.vertical, HYKATheme.spacingM)
                                 .frame(height: 48)
@@ -68,6 +71,9 @@ struct OnboardingStepProfileDetailsView: View {
                             TextField("Last name", text: $lastName)
                                 .font(HYKATheme.input)
                                 .foregroundColor(.black) // Typed text in black
+                                .textInputAutocapitalization(.words)
+                                .autocorrectionDisabled()
+                                .submitLabel(.done)
                                 .padding(.horizontal, HYKATheme.spacingM)
                                 .padding(.vertical, HYKATheme.spacingM)
                                 .frame(height: 48)
@@ -139,9 +145,10 @@ struct OnboardingStepProfileDetailsView: View {
                     .padding(.top, HYKATheme.spacingL)
                 }
             }
-            .dismissKeyboardOnTap()
+            .scrollDismissesKeyboard(.interactively)
         }
         .background(HYKATheme.Light.background)
+        .keyboardDoneToolbar()
         .sheet(isPresented: $showDatePicker) {
             NavigationView {
                 DatePicker(
@@ -165,6 +172,8 @@ struct OnboardingStepProfileDetailsView: View {
                     }
                 }
             }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .alert("Sign Out", isPresented: $showSignOutAlert) {
             Button("Cancel", role: .cancel) { }

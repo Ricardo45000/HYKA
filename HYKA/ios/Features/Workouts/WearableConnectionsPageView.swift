@@ -9,6 +9,18 @@ struct WearableConnectionsPageView: View {
             .environmentObject(session)
             .navigationTitle("Connexion with your wearable")
             .navigationBarTitleDisplayMode(.large)
+            .toolbarColorScheme(.light, for: .navigationBar)
+            .onAppear {
+                // Set navigation bar title color to black
+                let appearance = UINavigationBarAppearance()
+                appearance.configureWithDefaultBackground()
+                appearance.largeTitleTextAttributes = [.foregroundColor: UIColor.black]
+                appearance.titleTextAttributes = [.foregroundColor: UIColor.black]
+                
+                UINavigationBar.appearance().standardAppearance = appearance
+                UINavigationBar.appearance().scrollEdgeAppearance = appearance
+                UINavigationBar.appearance().compactAppearance = appearance
+            }
     }
 }
 

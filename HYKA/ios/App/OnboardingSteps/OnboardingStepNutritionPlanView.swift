@@ -22,20 +22,6 @@ struct OnboardingStepNutritionPlanView: View {
             .ignoresSafeArea()
             
             VStack(spacing: 0) {
-                // HYKA header at top - centered
-                HStack {
-                    Spacer()
-                    Text("HYKA")
-                        .font(.system(size: 51, weight: .black, design: .default))
-                        .fontWidth(.condensed)
-                        .modifier(ForwardSlant(degrees: 10))
-                        .kerning(1)
-                        .foregroundColor(.white)
-                    Spacer()
-                }
-                .padding(.top, 48)
-                .padding(.horizontal, 24)
-                
                 Spacer().frame(height: 60)
                 
                 // Main card
@@ -141,7 +127,7 @@ struct OnboardingStepNutritionPlanView: View {
                 
                 Spacer()
                 
-                // Bottom CTA section
+                // Bottom CTA section (text only - buttons moved to parent)
                 VStack(spacing: 16) {
                     Text("Nutrition planning")
                         .font(.system(size: 19, weight: .semibold))
@@ -151,52 +137,10 @@ struct OnboardingStepNutritionPlanView: View {
                         .font(.system(size: 14, weight: .regular))
                         .multilineTextAlignment(.center)
                         .foregroundColor(Color.white.opacity(0.8))
-                    
-                    // Pager indicator
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(Color.white.opacity(0.4))
-                            .frame(width: 8, height: 8)
-                        
-                        Circle()
-                            .fill(Color.white.opacity(0.4))
-                            .frame(width: 8, height: 8)
-                        
-                        Capsule()
-                            .fill(Color.white)
-                            .frame(width: 36, height: 8)
-                    }
-                    .padding(.top, 8)
-                    
-                    // Primary button
-                    Button {
-                        showSignUpModal = true
-                    } label: {
-                        Text("Join for free")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 18)
-                            .background(
-                                RoundedRectangle(cornerRadius: 16)
-                                    .fill(Color.hykaPurple)
-                            )
-                    }
-                    .padding(.top, 16)
-                    
-                    // Log in button
-                    Button {
-                        showLoginModal = true
-                    } label: {
-                        Text("Log in")
-                            .font(.system(size: 15, weight: .regular))
-                            .foregroundColor(Color.hykaPurple)
-                    }
-                    .padding(.top, 16)
-                    .padding(.bottom, 32)
                 }
                 .frame(maxWidth: 360)
                 .padding(.horizontal, 24)
+                .padding(.bottom, 32)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
