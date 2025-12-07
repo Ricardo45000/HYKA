@@ -46,6 +46,8 @@ struct EditFuelTypeReferenceModal: View {
             ScrollView {
                 contentView
             }
+            .scrollDismissesKeyboard(.interactively)
+            .dismissKeyboardOnTap()
             .background(HYKATheme.Light.background)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -485,7 +487,8 @@ struct CategoryPickerModal: View {
                         HStack {
                             Text(category)
                                 .font(.system(size: 15, weight: .regular))
-                                .foregroundColor(HYKATheme.Light.foreground)
+                                // Ensure text is visible in both light and dark modes, preferring white/light for dark modal
+                                .foregroundColor(Color.primary)
                             
                             Spacer()
                             
@@ -496,8 +499,11 @@ struct CategoryPickerModal: View {
                             }
                         }
                     }
+                    .listRowBackground(Color.clear) // Transparent background for rows
                 }
             }
+            .listStyle(PlainListStyle()) // Use plain list style
+            .background(HYKATheme.Light.inputBackground) // Set background for the list
             .navigationTitle("Select Category")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -509,6 +515,7 @@ struct CategoryPickerModal: View {
                 }
             }
         }
+        .colorScheme(.dark) // Force dark mode for the picker modal to match the screenshot style but ensure text is readable
     }
 }
 

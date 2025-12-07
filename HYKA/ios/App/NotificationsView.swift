@@ -1,7 +1,9 @@
 import SwiftUI
 
 struct NotificationsView: View {
+    @StateObject private var pushService = PushNotificationService.shared
     @State private var notificationsEnabled = false
+    @State private var showingSettingsAlert = false
     
     var body: some View {
         ScrollView {
@@ -27,10 +29,22 @@ struct NotificationsView: View {
                             
                             Spacer()
                             
-                            Toggle("", isOn: $notificationsEnabled)
-                                .tint(Color.hykaPurple)
-                                .labelsHidden()
-                                .scaleEffect(1.2)
+                            Toggle("", isOn: Binding(
+                                get: { pushService.isAuthorized },
+                                set: { newValue in
+                                    if newValue {
+                                        Task {
+                                            await pushService.requestAuthorization()
+                                        }
+                                    } else {
+                                        // Apps cannot revoke permissions programmatically
+                                        showingSettingsAlert = true
+                                    }
+                                }
+                            ))
+                            .tint(Color.hykaPurple)
+                            .labelsHidden()
+                            .scaleEffect(1.2)
                         }
                         .padding(.horizontal, HYKATheme.spacingXXL)
                         .padding(.vertical, HYKATheme.spacingL)
@@ -42,11 +56,13 @@ struct NotificationsView: View {
                 .padding(.top, HYKATheme.spacingXXL)
                 
                 // Info Text
-                Text("Notification settings will be available soon. We'll notify you when new features are ready.")
-                    .font(HYKATheme.caption)
-                    .foregroundColor(HYKATheme.Light.mutedForeground)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, HYKATheme.spacingXXL)
+                if !pushService.isAuthorized {
+                    Text("Tap to enable notifications. You may be prompted to allow notifications in your system settings.")
+                        .font(HYKATheme.caption)
+                        .foregroundColor(HYKATheme.Light.mutedForeground)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, HYKATheme.spacingXXL)
+                }
             }
             .padding(.vertical, HYKATheme.spacingXXL)
         }
@@ -54,7 +70,24 @@ struct NotificationsView: View {
         .navigationTitle("Notifications")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.light, for: .navigationBar)
+        .alert(isPresented: $showingSettingsAlert) {
+            Alert(
+                title: Text("Turn off Notifications"),
+                message: Text("To disable notifications, please go to Settings > HYKA > Notifications and switch off 'Allow Notifications'."),
+                primaryButton: .default(Text("Open Settings")) {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                },
+                secondaryButton: .cancel()
+            )
+        }
         .onAppear {
+            // Refresh authorization status
+            Task {
+                await pushService.checkAuthorizationStatus()
+            }
+            
             // Set navigation bar title color to black
             let appearance = UINavigationBarAppearance()
             appearance.configureWithDefaultBackground()

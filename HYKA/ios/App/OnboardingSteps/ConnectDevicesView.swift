@@ -254,25 +254,9 @@ struct ConnectDevicesView: View {
                     Color.black.opacity(0.3)
                         .ignoresSafeArea()
                     
-                    VStack(spacing: HYKATheme.spacingL) {
-                        ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                            .scaleEffect(1.5)
-                        
-                        if let provider = oauthManager.connectingProvider {
-                            Text("Connecting to \(provider)...")
-                                .font(HYKATheme.h4)
-                                .foregroundColor(.white)
-                        } else {
-                            Text("Connecting...")
-                                .font(HYKATheme.h4)
-                                .foregroundColor(.white)
-                        }
-                    }
-                    .padding(HYKATheme.spacingXXL)
-                    .background(
-                        RoundedRectangle(cornerRadius: HYKATheme.cornerRadiusL)
-                            .fill(Color.hykaPurple)
+                    HYKALoadingCard(
+                        message: oauthManager.connectingProvider != nil ? "Connecting to \(oauthManager.connectingProvider!)..." : "Connecting...",
+                        backgroundColor: Color.hykaPurple
                     )
                 }
             }
@@ -299,13 +283,20 @@ struct ConnectDevicesView: View {
             // Get root view controller for OAuth presentation
             guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                   let rootViewController = windowScene.windows.first?.rootViewController else {
-                ErrorManager.shared.showError(title: "Connection Failed", message: "Could not find view controller for OAuth")
+                ErrorManager.shared.showError(title: "Connexion Failed", message: "Could not find view controller for OAuth")
                 isLoading = false
                 return
             }
             
             do {
                 try await oauthManager.connectProvider(deviceName, from: rootViewController)
+                
+                // Disconnect other devices if any (Enforce Single Connection)
+                let otherDevices = connectedDevices.filter { $0 != deviceName }
+                for otherDevice in otherDevices {
+                    print("🔌 Disconnecting previous device: \(otherDevice)")
+                    await disconnectDevice(otherDevice)
+                }
                 
                 // Connection successful
                 connectedDevices.insert(deviceName)
@@ -314,9 +305,9 @@ struct ConnectDevicesView: View {
             } catch {
                 print("❌ Error connecting to \(deviceName): \(error)")
                 if case DeviceOAuthError.notImplemented(let message) = error {
-                    ErrorManager.shared.showError(title: "Connection Not Available", message: "\(deviceName) connection not yet available. \(message)")
+                    ErrorManager.shared.showError(title: "Connexion Not Available", message: "\(deviceName) connection not yet available. \(message)")
                 } else {
-                    ErrorManager.shared.showError(error, title: "Connection Failed")
+                    ErrorManager.shared.showError(error, title: "Connexion Failed")
                 }
             }
             
@@ -362,7 +353,7 @@ struct ConnectDevicesView: View {
     }
     
     private func isComingSoon(_ deviceName: String) -> Bool {
-        deviceName == "Suunto" || deviceName == "Coros"
+        deviceName == "Coros" // Only Coros is coming soon now
     }
     
     // Load existing connections from database

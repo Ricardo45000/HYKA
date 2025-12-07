@@ -22,6 +22,7 @@ final class SessionManager: NSObject, ObservableObject {
     @Published var isLoading = true
     @Published var currentUser: User?
     @Published var hasCompletedOnboarding = false
+    @Published var oauthUserInfo: OAuthUserInfo? = nil
     
     private let onboardingKey = "hasCompletedOnboarding"
     
@@ -48,6 +49,17 @@ final class SessionManager: NSObject, ObservableObject {
                 hasCompletedOnboarding = hasCompleted
                 // Sync to UserDefaults as a backup
                 UserDefaults.standard.set(hasCompleted, forKey: onboardingKey)
+                
+                // Sync user ID to UserDefaults for push notifications
+                UserDefaults.standard.set(session.user.id.uuidString, forKey: "hyka.user.id")
+                
+                // Register device token
+                Task {
+                    if let appDelegate = UIApplication.shared.delegate as? AppDelegate {
+                        await appDelegate.registerDeviceTokenForUser(session.user.id)
+                    }
+                }
+                
                 print("✅ Onboarding status loaded from Supabase: \(hasCompleted)")
             } catch {
                 // Fallback to UserDefaults if Supabase check fails
@@ -135,6 +147,17 @@ final class SessionManager: NSObject, ObservableObject {
                             let hasCompleted = try await SupabaseService.hasCompletedOnboarding(userId: userId)
                             hasCompletedOnboarding = hasCompleted
                             UserDefaults.standard.set(hasCompleted, forKey: onboardingKey)
+                            
+                            // Sync user ID to UserDefaults for push notifications (redundant here but safe)
+                            UserDefaults.standard.set(userId.uuidString, forKey: "hyka.user.id")
+                            
+                            // Register device token
+                            Task {
+                                if let appDelegate = UIApplication.shared.delegate as? AppDelegate {
+                                    await appDelegate.registerDeviceTokenForUser(userId)
+                                }
+                            }
+                            
                             print("✅ Onboarding status loaded from Supabase: \(hasCompleted)")
                         } catch {
                             print("⚠️ Failed to load onboarding status from Supabase")
@@ -178,6 +201,13 @@ final class SessionManager: NSObject, ObservableObject {
             // Store user ID and email in UserDefaults for offline access
             UserDefaults.standard.set(response.user.id.uuidString, forKey: "hyka.user.id")
             UserDefaults.standard.set(email, forKey: "hyka.user.email")
+            
+            // Register device token for push notifications
+            Task {
+                if let appDelegate = UIApplication.shared.delegate as? AppDelegate {
+                    await appDelegate.registerDeviceTokenForUser(response.user.id)
+                }
+            }
             
             // Store session data for offline fallback
             if let session = try? await Supa.client.auth.session {
@@ -681,6 +711,14 @@ final class SessionManager: NSObject, ObservableObject {
                         
                         print("✅ Retrieved user info from Supabase API")
                         
+                        // Extract OAuth user info from userJson
+                        let userMetadata = userJson["user_metadata"] as? [String: Any] ?? [:]
+                        let extractedOAuthInfo = OAuthUserInfo.from(userMetadata: userMetadata)
+                        await MainActor.run {
+                            oauthUserInfo = extractedOAuthInfo
+                            print("   - Extracted OAuth info: firstName=\(extractedOAuthInfo.firstName ?? "nil"), lastName=\(extractedOAuthInfo.lastName ?? "nil"), gender=\(extractedOAuthInfo.gender?.rawValue ?? "nil")")
+                        }
+                        
                         // Manually create session using Supabase's refresh token endpoint
                         // This is the proper way to establish a session from tokens
                         print("🔄 Exchanging refresh token for session...")
@@ -1072,6 +1110,17 @@ final class SessionManager: NSObject, ObservableObject {
                                 await MainActor.run {
                                     hasCompletedOnboarding = hasCompleted
                                     UserDefaults.standard.set(hasCompleted, forKey: onboardingKey)
+                                    
+                                    // Sync user ID to UserDefaults
+                                    UserDefaults.standard.set(session.user.id.uuidString, forKey: "hyka.user.id")
+                                    
+                                    // Register device token
+                                    Task {
+                                        if let appDelegate = UIApplication.shared.delegate as? AppDelegate {
+                                            await appDelegate.registerDeviceTokenForUser(session.user.id)
+                                        }
+                                    }
+                                    
                                     isAuthenticated = true
                                     isLoading = false
                                 }
@@ -1102,6 +1151,14 @@ final class SessionManager: NSObject, ObservableObject {
                                 await MainActor.run {
                                     hasCompletedOnboarding = hasCompleted
                                     UserDefaults.standard.set(hasCompleted, forKey: onboardingKey)
+                                    
+                                    // Register device token
+                                    Task {
+                                        if let appDelegate = UIApplication.shared.delegate as? AppDelegate {
+                                            await appDelegate.registerDeviceTokenForUser(userId)
+                                        }
+                                    }
+                                    
                                     isAuthenticated = true
                                 }
                                 print("✅ Authentication successful using JWT fallback (direct)")
@@ -1130,9 +1187,16 @@ final class SessionManager: NSObject, ObservableObject {
                 print("✅ Session fetched")
                 
                 print("🔄 Updating SessionManager state...")
+                
+                // Extract OAuth user info (name, gender) from user metadata
+                let userMetadata = session.user.userMetadata ?? [:]
+                let extractedOAuthInfo = OAuthUserInfo.from(userMetadata: userMetadata)
+                
                 await MainActor.run {
                     currentUser = session.user
+                    oauthUserInfo = extractedOAuthInfo
                     print("   - Set currentUser to: \(session.user.email ?? "unknown") (on main thread)")
+                    print("   - Extracted OAuth info: firstName=\(extractedOAuthInfo.firstName ?? "nil"), lastName=\(extractedOAuthInfo.lastName ?? "nil"), gender=\(extractedOAuthInfo.gender?.rawValue ?? "nil")")
                     print("   - NOT setting isAuthenticated yet (will set after onboarding check)")
                 }
                 
@@ -1333,6 +1397,63 @@ extension String {
             base64 = base64.padding(toLength: base64.count + 4 - remainder, withPad: "=", startingAt: 0)
         }
         return base64
+    }
+}
+
+// MARK: - OAuth User Info
+
+struct OAuthUserInfo {
+    let firstName: String?
+    let lastName: String?
+    let gender: UserProfile.Gender?
+    
+    /// Extract OAuth user info from Supabase user metadata
+    static func from(userMetadata: [String: Any]) -> OAuthUserInfo {
+        // Google/Facebook typically provide:
+        // - full_name: "John Doe"
+        // - first_name: "John"
+        // - last_name: "Doe"
+        // - gender: "male" or "female" (Facebook sometimes)
+        
+        var firstName: String? = nil
+        var lastName: String? = nil
+        var gender: UserProfile.Gender? = nil
+        
+        // Try to get first_name and last_name directly
+        if let first = userMetadata["first_name"] as? String, !first.isEmpty {
+            firstName = first
+        }
+        if let last = userMetadata["last_name"] as? String, !last.isEmpty {
+            lastName = last
+        }
+        
+        // If not available, try to split full_name
+        if firstName == nil || lastName == nil {
+            if let fullName = userMetadata["full_name"] as? String, !fullName.isEmpty {
+                let components = fullName.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: " ")
+                if components.count >= 2 {
+                    firstName = components.first
+                    lastName = components.dropFirst().joined(separator: " ")
+                } else if components.count == 1 {
+                    firstName = components.first
+                }
+            }
+        }
+        
+        // Extract gender (Facebook sometimes provides this)
+        if let genderString = userMetadata["gender"] as? String {
+            let lowercased = genderString.lowercased()
+            switch lowercased {
+            case "male", "m":
+                gender = .male
+            case "female", "f":
+                gender = .female
+            default:
+                gender = nil
+            }
+        }
+        
+        return OAuthUserInfo(firstName: firstName, lastName: lastName, gender: gender)
     }
 }
 

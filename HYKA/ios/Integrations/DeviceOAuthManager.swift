@@ -63,11 +63,6 @@ final class DeviceOAuthManager: ObservableObject {
         do {
             let (accessToken, refreshToken, tokenSecret, expiresAt) = try await performOAuth(for: provider, from: viewController)
             
-            // Polar requires user registration before accessing data
-            if provider.lowercased() == "polar" {
-                try await registerPolarUser(accessToken: accessToken)
-                print("✅ Polar user registered successfully")
-            }
             
             // Save connection to database first (so user can manually sync if initial fetch fails)
             try await SupabaseService.saveOAuthConnection(
@@ -81,30 +76,25 @@ final class DeviceOAuthManager: ObservableObject {
             connectionSaved = true
             print("✅ OAuth connection saved for \(provider)")
             
-            // For Garmin: Trigger server-side historical backfill (30 days)
+            // Trigger server-side historical backfill (30 days)
             // This happens automatically after user successfully connects and agrees to share data
-            if provider.lowercased() == "garmin" {
-                do {
-                    print("🔄 Triggering Garmin historical sync (last 30 days)...")
-                    print("   User has agreed to share data - fetching historical activities")
-                    try await triggerGarminHistoricalBackfill(userId: userId)
-                    print("✅ Historical sync requested successfully")
-                    print("   Activities will arrive via webhooks within 15-60 minutes")
-                } catch {
-                    print("⚠️ Error triggering historical sync: \(error)")
-                    print("   User can manually sync or wait for hourly cron job")
-                    // Don't show error to user - this is a background operation
-                    // Connection is still successful even if historical sync fails
+            do {
+                print("🔄 Triggering historical sync for \(provider) (last 30 days)...")
+                try await triggerHistoricalSync(userId: userId, provider: provider.lowercased())
+                print("✅ Historical sync requested successfully for \(provider)")
+                
+                // Show specific alert for Garmin sync delay
+                if provider.lowercased() == "garmin" {
+                    await MainActor.run {
+                        ErrorManager.shared.showError(
+                            title: "Sync in Progress",
+                            message: "Garmin historical data sync has started. Your activities will appear in about 15 minutes."
+                        )
+                    }
                 }
-            } else {
-                // For other providers: fetch data client-side (old approach)
-                do {
-                    try await fetchAndStoreInitialData(userId: userId, provider: provider.lowercased(), accessToken: accessToken, tokenSecret: tokenSecret)
-                } catch {
-                    // Log error but don't fail the connection if initial data fetch fails
-                    print("⚠️ Error fetching initial data (connection still successful): \(error)")
-                    ErrorManager.shared.showError(error, title: "Initial Data Sync")
-                }
+            } catch {
+                print("⚠️ Error triggering historical sync for \(provider): \(error)")
+                // Don't show error to user - this is a background operation
             }
             
             // Automatically fetch and store health metrics after connection - push to database immediately
@@ -138,7 +128,7 @@ final class DeviceOAuthManager: ObservableObject {
             
             errorMessage = error.localizedDescription
             print("❌ Error connecting to \(provider): \(error)")
-            ErrorManager.shared.showError(error, title: "Connection Failed")
+            ErrorManager.shared.showError(error, title: "Connexion Failed")
             throw error
         }
     }
@@ -159,8 +149,9 @@ final class DeviceOAuthManager: ObservableObject {
             throw DeviceOAuthError.notImplemented("Coros OAuth - Check Coros API documentation")
             
         case "suunto":
-            // Suunto uses Movescount OAuth or newer Suunto Plus API
-            throw DeviceOAuthError.notImplemented("Suunto OAuth - Check Suunto API documentation")
+            // Suunto uses OAuth 2.0 (Suunto Plus API)
+            let (accessToken, refreshToken, expiresAt) = try await performSuuntoOAuth(from: viewController)
+            return (accessToken, refreshToken, nil, expiresAt) // OAuth 2.0: no token secret
             
         case "polar":
             let (accessToken, refreshToken, expiresAt) = try await performPolarOAuth(from: viewController)
@@ -241,17 +232,14 @@ final class DeviceOAuthManager: ObservableObject {
             
             // IMPORTANT: Must set presentation context provider BEFORE calling start()
             session.presentationContextProvider = presentationContextProvider
-            // Set to false to allow cookies (needed for Cloudflare challenges)
-            // Garmin uses Cloudflare which requires cookies to pass bot protection
-            // Note: Even with cookies enabled, Cloudflare may still show challenges
-            // The user may need to complete the challenge manually in the browser
-            session.prefersEphemeralWebBrowserSession = false
+            // Set to true to ensure a clean session every time.
+            // This fixes issues where "bad" cookies cause 500 errors on Garmin's side.
+            session.prefersEphemeralWebBrowserSession = true
             
             print("🌐 Starting OAuth session...")
             print("   URL: \(authURL.absoluteString)")
             print("   Callback scheme: com.hyka.app")
-            print("   Ephemeral session: false (cookies enabled)")
-            print("   Note: If you see a Cloudflare challenge, please complete it in the browser")
+            print("   Ephemeral session: true")
             
             if !session.start() {
                 print("❌ Failed to start OAuth session")
@@ -712,75 +700,270 @@ final class DeviceOAuthManager: ObservableObject {
     
     private func performPolarOAuth(from viewController: UIViewController) async throws -> (accessToken: String, refreshToken: String?, expiresAt: Date?) {
         // Polar OAuth 2.0
-        let polarClientId = "01a61f9c-5537-47dc-959f-e653a83485bb"
-        let polarClientSecret = "fee3f32b-4ee1-4afb-a93b-f16b787803e0"
+        let polarClientId = Config.polarClientID
+        let redirectURI = Config.polarRedirectURI
         
-        // Polar redirect URI - use custom URL scheme for mobile apps
-        let redirectURI = "com.hyka.app://polar/callback"
-        let redirectURL = URL(string: redirectURI)!
-        
-        print("🔄 Polar OAuth - Redirect URI: \(redirectURI)")
-        print("📝 Make sure this is configured in Polar app settings:")
-        print("   1. Go to: https://admin.polaraccesslink.com/")
-        print("   2. Set OAuth redirect URL to: \(redirectURI)")
-        print("   3. Save and try again")
+        print("🔄 Polar OAuth 2.0 Flow")
+        print("   Client ID: \(polarClientId)")
+        print("   Redirect URI: \(redirectURI)")
         
         // Polar OAuth authorization endpoint
         // Reference: https://www.polar.com/accesslink-api/#polar-accesslink-api
-        // Build URL manually to ensure redirect_uri encoding matches token exchange
-        var authURLString = "https://flow.polar.com/oauth2/authorization"
-        authURLString += "?client_id=\(polarClientId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? polarClientId)"
-        authURLString += "&redirect_uri=\(redirectURI.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? redirectURI)"
-        authURLString += "&response_type=code"
-        authURLString += "&scope=\(("accesslink.read_all").addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "accesslink.read_all")"
+        var authURLComponents = URLComponents(string: "https://flow.polar.com/oauth2/authorization")!
+        authURLComponents.queryItems = [
+            URLQueryItem(name: "client_id", value: polarClientId),
+            URLQueryItem(name: "redirect_uri", value: redirectURI),
+            URLQueryItem(name: "response_type", value: "code"),
+            URLQueryItem(name: "scope", value: "accesslink.read_all")
+        ]
         
-        guard let finalURL = URL(string: authURLString) else {
+        guard let authURL = authURLComponents.url else {
             throw DeviceOAuthError.invalidURL
         }
         
-        print("🔐 Polar Authorization URL: \(finalURL.absoluteString)")
+        print("🔐 Polar Authorization URL: \(authURL.absoluteString)")
         
         // Create presentation context provider
         let presentationProvider = AuthPresentationContextProvider(viewController: viewController)
         
         // Open in Safari/ASWebAuthenticationSession
-        return try await withCheckedThrowingContinuation { continuation in
+        let callbackURL = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
             let authSession = ASWebAuthenticationSession(
-                url: finalURL,
-                callbackURLScheme: "com.hyka.app"  // Custom URL scheme
+                url: authURL,
+                callbackURLScheme: "com.hyka.app"
             ) { callbackURL, error in
-                print("🔗 Polar OAuth callback received: \(callbackURL?.absoluteString ?? "nil")")
                 if let error = error {
                     continuation.resume(throwing: error)
                     return
                 }
                 
-                guard let callbackURL = callbackURL,
-                      let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
-                      let code = components.queryItems?.first(where: { $0.name == "code" })?.value else {
+                guard let callbackURL = callbackURL else {
                     continuation.resume(throwing: DeviceOAuthError.invalidCallback)
                     return
                 }
                 
-                // Exchange code for access token
-                Task {
-                    do {
-                        let (accessToken, refreshToken, expiresAt) = try await self.exchangePolarCode(code: code, clientId: polarClientId, clientSecret: polarClientSecret, redirectURI: redirectURI)
-                        continuation.resume(returning: (accessToken, refreshToken, expiresAt))
-                    } catch {
-                        continuation.resume(throwing: error)
-                    }
-                }
+                continuation.resume(returning: callbackURL)
             }
             
             authSession.presentationContextProvider = presentationProvider
             authSession.prefersEphemeralWebBrowserSession = false
-            authSession.start()
+            
+            if !authSession.start() {
+                continuation.resume(throwing: DeviceOAuthError.invalidURL)
+            }
             
             // Keep references to prevent deallocation
             objc_setAssociatedObject(viewController, "polarAuthSession", authSession, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-            objc_setAssociatedObject(viewController, "authPresentationProvider", presentationProvider, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            objc_setAssociatedObject(viewController, "polarAuthPresentationProvider", presentationProvider, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         }
+        
+        print("✅ Received Polar callback: \(callbackURL.absoluteString)")
+        
+        // Extract authorization code
+        guard let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
+              let code = components.queryItems?.first(where: { $0.name == "code" })?.value else {
+            print("❌ No 'code' parameter found in Polar callback URL")
+            throw DeviceOAuthError.invalidCallback
+        }
+        
+        print("✅ Polar authorization code: \(code.prefix(20))...")
+        
+        // Exchange code for access token via Supabase Edge Function
+        let edgeFunctionURL = URL(string: Config.polarAuthCallbackURL)!
+        var request = URLRequest(url: edgeFunctionURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "Authorization")
+        
+        guard let session = session,
+              let userId = session.currentUser?.id else {
+            throw DeviceOAuthError.notAuthenticated
+        }
+        
+        let requestBody: [String: Any] = [
+            "code": code,
+            "redirect_uri": redirectURI,
+            "user_id": userId.uuidString
+        ]
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        
+        print("🔄 Exchanging code for tokens via edge function...")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw DeviceOAuthError.invalidResponse
+        }
+        
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let errorText = String(data: data, encoding: .utf8) ?? "Unknown error"
+            print("❌ Token exchange failed: \(httpResponse.statusCode) - \(errorText)")
+            throw DeviceOAuthError.apiError(message: "Token exchange failed: HTTP \(httpResponse.statusCode): \(errorText)")
+        }
+        
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw DeviceOAuthError.invalidResponse
+        }
+        
+        guard let accessToken = json["access_token"] as? String else {
+            throw DeviceOAuthError.apiError(message: "No access_token in response")
+        }
+        
+        let refreshToken = json["refresh_token"] as? String
+        let expiresIn = json["expires_in"] as? Int
+        let expiresAt: Date? = expiresIn.map { Date().addingTimeInterval(TimeInterval($0)) }
+        
+        print("✅ Polar tokens received")
+        print("   Access token: \(accessToken.prefix(20))...")
+        
+        return (accessToken, refreshToken, expiresAt)
+    }
+    
+    private func performSuuntoOAuth(from viewController: UIViewController) async throws -> (accessToken: String, refreshToken: String?, expiresAt: Date?) {
+        // Suunto OAuth 2.0 Flow
+        // Reference: Suunto API documentation
+        let suuntoClientId = Config.suuntoClientID
+        let redirectURI = Config.suuntoRedirectURI
+        
+        print("🔄 Suunto OAuth 2.0 Flow")
+        print("   Client ID: \(suuntoClientId)")
+        print("   Redirect URI: \(redirectURI)")
+        
+        // Suunto OAuth authorization endpoint
+        // IMPORTANT: Per Suunto docs, the authorize endpoint is on cloudapi-oauth.suunto.com
+        // NOT cloudapi.suunto.com - that's only for API calls after auth
+        // Reference: https://apizone.suunto.com/how-to-start
+        var authURLComponents = URLComponents(string: "https://cloudapi-oauth.suunto.com/oauth/authorize")!
+        authURLComponents.queryItems = [
+            URLQueryItem(name: "response_type", value: "code"),
+            URLQueryItem(name: "client_id", value: suuntoClientId),
+            URLQueryItem(name: "redirect_uri", value: redirectURI)
+            // Note: Don't specify scope - Suunto defaults to "workout" which includes 247 data access
+            // Adding custom scopes causes "invalid_scope" error
+        ]
+        
+        guard let authURL = authURLComponents.url else {
+            throw DeviceOAuthError.invalidURL
+        }
+        
+        print("🔐 Suunto Authorization URL: \(authURL.absoluteString)")
+        print("   Redirect URI: \(redirectURI)")
+        print("   ⚠️ IMPORTANT: Check Suunto settings:")
+        print("      - Authorization Callback Domain MUST be: gvfhtiljkybbrbxoyqsq.supabase.co")
+        print("      - Make sure you clicked 'Save' in Suunto Developer Portal")
+        print("      - Wait 1-2 minutes after saving for changes to take effect")
+        
+        // Create presentation context provider
+        let presentationProvider = AuthPresentationContextProvider(viewController: viewController)
+        
+        // Open in Safari/ASWebAuthenticationSession
+        // When using web redirect, Suunto redirects to web URL, edge function redirects to app
+        let callbackURL = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
+            // Always use app scheme for callback (edge function redirects to this)
+            let callbackScheme = "com.hyka.app"
+            
+            let authSession = ASWebAuthenticationSession(
+                url: authURL,
+                callbackURLScheme: callbackScheme
+            ) { callbackURL, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                
+                guard let callbackURL = callbackURL else {
+                    continuation.resume(throwing: DeviceOAuthError.invalidCallback)
+                    return
+                }
+                
+                continuation.resume(returning: callbackURL)
+            }
+            
+            authSession.presentationContextProvider = presentationProvider
+            authSession.prefersEphemeralWebBrowserSession = false
+            
+            if !authSession.start() {
+                continuation.resume(throwing: DeviceOAuthError.invalidURL)
+            }
+            
+            // Keep references to prevent deallocation
+            objc_setAssociatedObject(viewController, "suuntoAuthSession", authSession, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            objc_setAssociatedObject(viewController, "suuntoAuthPresentationProvider", presentationProvider, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        }
+        
+        print("✅ Received Suunto callback: \(callbackURL.absoluteString)")
+        
+        // Extract authorization code (same pattern as Garmin/Strava)
+        guard let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false) else {
+            print("❌ Failed to parse callback URL into components")
+            throw DeviceOAuthError.invalidCallback
+        }
+        
+        print("📋 Query items: \(components.queryItems?.map { "\($0.name)=\($0.value ?? "nil")" }.joined(separator: "&") ?? "none")")
+        
+        guard let code = components.queryItems?.first(where: { $0.name == "code" })?.value else {
+            print("❌ No 'code' parameter found in Suunto callback URL")
+            print("   Available parameters: \(components.queryItems?.map { $0.name }.joined(separator: ", ") ?? "none")")
+            throw DeviceOAuthError.invalidCallback
+        }
+        
+        print("✅ Suunto authorization code: \(code.prefix(20))...")
+        
+        // Exchange code for access token via Supabase Edge Function
+        // This keeps the client_secret secure on the server
+        let edgeFunctionURL = URL(string: Config.suuntoAuthCallbackURL)!
+        var request = URLRequest(url: edgeFunctionURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "Authorization")
+        
+        guard let session = session,
+              let userId = session.currentUser?.id else {
+            throw DeviceOAuthError.notAuthenticated
+        }
+        
+        let requestBody: [String: Any] = [
+            "code": code,
+            "redirect_uri": redirectURI,
+            "user_id": userId.uuidString
+        ]
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        
+        print("🔄 Exchanging code for tokens via edge function...")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw DeviceOAuthError.invalidResponse
+        }
+        
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let errorText = String(data: data, encoding: .utf8) ?? "Unknown error"
+            print("❌ Token exchange failed: \(httpResponse.statusCode) - \(errorText)")
+            throw DeviceOAuthError.apiError(message: "Token exchange failed: HTTP \(httpResponse.statusCode): \(errorText)")
+        }
+        
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw DeviceOAuthError.invalidResponse
+        }
+        
+        guard let accessToken = json["access_token"] as? String else {
+            throw DeviceOAuthError.apiError(message: "No access_token in response")
+        }
+        
+        let refreshToken = json["refresh_token"] as? String
+        let expiresIn = json["expires_in"] as? Int
+        let expiresAt: Date? = expiresIn.map { Date().addingTimeInterval(TimeInterval($0)) }
+        
+        print("✅ Suunto tokens received")
+        print("   Access token: \(accessToken.prefix(20))...")
+        if let expiresIn = expiresIn {
+            print("   Expires in: \(expiresIn) seconds")
+        }
+        
+        return (accessToken, refreshToken, expiresAt)
     }
     
     private func performStravaOAuth(from viewController: UIViewController) async throws -> (accessToken: String, refreshToken: String?, expiresAt: Date?) {
@@ -962,179 +1145,13 @@ final class DeviceOAuthManager: ObservableObject {
         return (accessToken, refreshToken, expiresAt)
     }
     
-    private func exchangePolarCode(code: String, clientId: String, clientSecret: String, redirectURI: String) async throws -> (accessToken: String, refreshToken: String?, expiresAt: Date?) {
-        // Polar API token endpoint
-        // Reference: https://www.polar.com/accesslink-api/#authentication
-        let tokenURL = URL(string: "https://polarremote.com/v2/oauth2/token")!
-        var request = URLRequest(url: tokenURL)
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        
-        // Polar uses Basic Auth with client_id:client_secret
-        let credentials = "\(clientId):\(clientSecret)"
-        guard let credentialsData = credentials.data(using: .utf8) else {
-            throw DeviceOAuthError.tokenExchangeFailed
-        }
-        let base64Credentials = credentialsData.base64EncodedString()
-        request.setValue("Basic \(base64Credentials)", forHTTPHeaderField: "Authorization")
-        
-        // Build form-encoded body
-        // Important: redirect_uri must match exactly what was used in authorization request
-        let bodyParams = [
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": redirectURI
-        ]
-        
-        // Form-encode the body parameters
-        let bodyString = bodyParams.map { key, value in
-            let encodedKey = key.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? key
-            let encodedValue = value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? value
-            return "\(encodedKey)=\(encodedValue)"
-        }.joined(separator: "&")
-        
-        request.httpBody = bodyString.data(using: .utf8)
-        
-        // Debug logging
-        print("🔐 Polar Token Exchange:")
-        print("   URL: \(tokenURL.absoluteString)")
-        print("   Code: \(code.prefix(20))...")
-        print("   Redirect URI: \(redirectURI)")
-        print("   Body: \(bodyString)")
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            print("❌ Polar token exchange: Invalid response type")
-            throw DeviceOAuthError.tokenExchangeFailed
-        }
-        
-        print("📡 Polar token exchange response:")
-        print("   Status Code: \(httpResponse.statusCode)")
-        print("   Headers: \(httpResponse.allHeaderFields)")
-        
-        guard (200...299).contains(httpResponse.statusCode) else {
-            let errorData = String(data: data, encoding: .utf8) ?? "Unable to decode error response"
-            print("❌ Polar token exchange error (status \(httpResponse.statusCode)):")
-            print("   Response: \(errorData)")
-            
-            // Try to parse error JSON
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                print("   Parsed JSON: \(json)")
-                if let error = json["error"] as? String {
-                    print("   Error: \(error)")
-                }
-                if let errorDescription = json["error_description"] as? String {
-                    print("   Description: \(errorDescription)")
-                }
-            }
-            
-            throw DeviceOAuthError.tokenExchangeFailed
-        }
-        
-        // Parse JSON response
-        let responseString = String(data: data, encoding: .utf8) ?? "Unable to decode response"
-        print("📦 Polar token exchange response body:")
-        print("   \(responseString)")
-        
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            print("❌ Failed to parse JSON response")
-            print("   Response data: \(data)")
-            throw DeviceOAuthError.tokenExchangeFailed
-        }
-        
-        print("✅ Parsed JSON: \(json)")
-        
-        guard let accessToken = json["access_token"] as? String else {
-            print("❌ Missing access_token in response")
-            print("   Available keys: \(json.keys.joined(separator: ", "))")
-            throw DeviceOAuthError.tokenExchangeFailed
-        }
-        
-        let refreshToken = json["refresh_token"] as? String
-        let expiresIn = json["expires_in"] as? Int
-        let expiresAt = expiresIn != nil ? Date().addingTimeInterval(TimeInterval(expiresIn!)) : nil
-        
-        print("✅ Successfully extracted tokens:")
-        print("   Access Token: \(accessToken.prefix(20))...")
-        print("   Refresh Token: \(refreshToken != nil ? "\(refreshToken!.prefix(20))..." : "nil")")
-        print("   Expires At: \(expiresAt?.description ?? "nil")")
-        
-        return (accessToken, refreshToken, expiresAt)
-    }
-    
-    /// Register Polar user - required before accessing data
-    /// Reference: https://www.polar.com/accesslink-api/#polar-accesslink-api
-    private func registerPolarUser(accessToken: String) async throws {
-        // Polar AccessLink API v3 - Register user endpoint
-        let registerURL = URL(string: "https://www.polaraccesslink.com/v3/users")!
-        var request = URLRequest(url: registerURL)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        
-        // Register user - Polar requires member-id in the request body
-        // According to Polar docs, member-id is optional but recommended
-        // We'll use a simple registration without member-id first
-        let body: [String: Any] = [:] // Empty body is acceptable
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        
-        print("🔐 Polar User Registration:")
-        print("   URL: \(registerURL.absoluteString)")
-        print("   Access Token: \(accessToken.prefix(20))...")
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            print("❌ Polar user registration: Invalid response type")
-            throw DeviceOAuthError.tokenExchangeFailed
-        }
-        
-        print("📡 Polar user registration response:")
-        print("   Status Code: \(httpResponse.statusCode)")
-        print("   Headers: \(httpResponse.allHeaderFields)")
-        
-        let responseString = String(data: data, encoding: .utf8) ?? "Unable to decode response"
-        print("📦 Response body: \(responseString)")
-        
-        // 200 = user already registered (OK)
-        // 201 = user successfully registered (Created)
-        // 400 = bad request
-        // 401 = unauthorized
-        if !(200...201).contains(httpResponse.statusCode) {
-            print("❌ Polar user registration failed (status \(httpResponse.statusCode))")
-            
-            // Try to parse error JSON
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                print("   Parsed JSON: \(json)")
-                if let error = json["error"] as? String {
-                    print("   Error: \(error)")
-                }
-                if let errorDescription = json["error_description"] as? String {
-                    print("   Description: \(errorDescription)")
-                }
-                if let message = json["message"] as? String {
-                    print("   Message: \(message)")
-                }
-            }
-            
-            // Don't fail the connection if registration fails - user might already be registered
-            // or registration might not be required for this app
-            print("⚠️ Polar user registration failed, but continuing with connection...")
-            return
-        }
-        
-        print("✅ Polar user registration successful (status: \(httpResponse.statusCode))")
-    }
-    
     // MARK: - Fetch Initial Data
     
     private func fetchAndStoreInitialData(userId: UUID, provider: String, accessToken: String, tokenSecret: String?) async throws {
         print("🔄 Fetching initial data for \(provider)")
         
         let service = WorkoutDataFetchingService()
-        // Fetch last 90 days of workouts on initial connection
+        // Fetch last 30 days of workouts on initial connection
         // This matches the sync function behavior and ensures users get their historical data
         do {
             let workoutsFetched = try await service.fetchAndStoreWorkouts(
@@ -1192,10 +1209,10 @@ final class DeviceOAuthManager: ObservableObject {
         print("✅ Training data pushed to database for \(provider)")
     }
     
-    /// Trigger historical backfill for last 30 days of Garmin activities
-    /// This is called automatically when user connects their Garmin account
-    private func triggerGarminHistoricalBackfill(userId: UUID) async throws {
-        print("🔄 Triggering Garmin historical backfill (last 30 days)...")
+    /// Trigger historical backfill for last 30 days
+    /// This is called automatically when user connects their account
+    private func triggerHistoricalSync(userId: UUID, provider: String) async throws {
+        print("🔄 Triggering \(provider) historical backfill (last 30 days)...")
         
         guard let session = session else {
             throw DeviceOAuthError.notAuthenticated
@@ -1216,7 +1233,8 @@ final class DeviceOAuthManager: ObservableObject {
         }
         
         // Call the historical sync edge function
-        let syncUrl = URL(string: "\(supabaseUrl)/functions/v1/garmin-historical-sync")!
+        let functionName = "\(provider)-historical-sync"
+        let syncUrl = URL(string: "\(supabaseUrl)/functions/v1/\(functionName)")!
         var request = URLRequest(url: syncUrl)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -1229,7 +1247,7 @@ final class DeviceOAuthManager: ObservableObject {
         
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
         
-        print("📡 Calling garmin-historical-sync edge function...")
+        print("📡 Calling \(functionName) edge function...")
         let (data, response) = try await URLSession.shared.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -1239,12 +1257,12 @@ final class DeviceOAuthManager: ObservableObject {
         if (200...299).contains(httpResponse.statusCode) {
             if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let success = json["success"] as? Bool, success {
-                print("✅ Historical sync requested successfully")
+                print("✅ Historical sync requested successfully for \(provider)")
                 if let message = json["message"] as? String {
                     print("   \(message)")
                 }
-                if let note = json["note"] as? String {
-                    print("   Note: \(note)")
+                if let count = json["count"] as? Int {
+                    print("   Processed: \(count)")
                 }
             } else {
                 print("⚠️ Historical sync response received but format unexpected")
@@ -1252,7 +1270,7 @@ final class DeviceOAuthManager: ObservableObject {
         } else {
             let errorString = String(data: data, encoding: .utf8) ?? "Unknown error"
             print("⚠️ Historical sync request returned status \(httpResponse.statusCode): \(errorString)")
-            // Don't throw - this is a background operation, connection is still successful
+            // Don't throw - this is a background operation
         }
     }
 }

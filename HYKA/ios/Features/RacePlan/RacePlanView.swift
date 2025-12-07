@@ -106,9 +106,7 @@ private struct SectionPlan {
 private extension Array where Element == Double {
     func averageValue() -> Double? {
         guard !isEmpty else { return nil }
-        // Round to 6 decimal places to ensure consistent results across calculations
-        let average = reduce(0, +) / Double(count)
-        return round(average * 1_000_000.0) / 1_000_000.0
+        return reduce(0, +) / Double(count)
     }
 }
 
@@ -488,15 +486,10 @@ struct RacePlanView: View {
             if isLoading || isDeletingRace {
                 Color.black.opacity(0.35)
                     .ignoresSafeArea()
-                VStack(spacing: HYKATheme.spacingM) {
-                    ProgressView()
-                    Text(isDeletingRace ? "Deleting race…" : "Fetching race data…")
-                        .font(HYKATheme.body)
-                        .foregroundColor(.white)
-                }
-                .padding(HYKATheme.spacingXXL)
-                .background(Color.hykaPurple)
-                .cornerRadius(HYKATheme.cornerRadiusL)
+                HYKALoadingCard(
+                    message: isDeletingRace ? "Deleting race…" : "Fetching race data…",
+                    backgroundColor: Color.hykaPurple
+                )
             }
         }
     }
@@ -527,7 +520,7 @@ struct RacePlanView: View {
                 Button {
                     showRaceCreation = true
                 } label: {
-                    Label("Add race", systemImage: "plus")
+                    Label("Add Race", systemImage: "plus")
                         .font(.system(size: 13, weight: .semibold))
                         .padding(.horizontal, HYKATheme.spacingM)
                         .padding(.vertical, HYKATheme.spacingS)
@@ -561,7 +554,7 @@ struct RacePlanView: View {
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundColor(HYKATheme.Light.foreground)
             
-            Text("Tap 'Add race' to import a GPX file and generate your first race strategy.")
+            Text("Tap 'Add Race' to import a GPX file and generate your first race strategy.")
                 .font(.system(size: 13, weight: .regular))
                 .foregroundColor(HYKATheme.Light.mutedForeground)
         }
@@ -614,8 +607,9 @@ struct RacePlanView: View {
     private func raceCardItem(for plan: RacePlanSummary) -> some View {
         ZStack(alignment: .topTrailing) {
             Button {
-                // Always allow selection - the function will handle duplicate clicks
-                Task { await selectRace(plan) }
+                if selectedRace?.id != plan.id {
+                    Task { await selectRace(plan) }
+                }
             } label: {
                 raceCard(for: plan, isSelected: selectedRace?.id == plan.id)
             }
@@ -633,7 +627,6 @@ struct RacePlanView: View {
             }
             .buttonStyle(PlainButtonStyle())
             .padding(8)
-            .allowsHitTesting(true)
         }
     }
     
@@ -728,7 +721,7 @@ struct RacePlanView: View {
                             fuelingCard(station: fuelingStations[index])
                         }
                     }
-                    .padding(.top, index == 0 ? 0 : HYKATheme.spacingXL)
+                    .padding(.top, index == 0 ? 0 : HYKATheme.spacingL)
                 }
                 
                 // Pacing Tips and Nutrition Tips Cards
@@ -1241,7 +1234,7 @@ struct RacePlanView: View {
     private func aidStationServiceColor(for type: AidService.ServiceType) -> Color {
         switch type {
         case .hydration: return Color.blue
-        case .gels: return Color.purple
+        case .gels: return Color.hykaPurple
         case .food: return Color.green
         case .crew: return Color.orange
         }
@@ -1637,11 +1630,11 @@ struct RacePlanView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(HYKATheme.spacingXXL)
-        .background(Color.purple.opacity(0.1))
+        .background(Color.hykaPurple.opacity(0.1))
         .cornerRadius(HYKATheme.cornerRadiusL)
         .overlay(
             RoundedRectangle(cornerRadius: HYKATheme.cornerRadiusL)
-                .stroke(Color.purple.opacity(0.3), lineWidth: 1)
+                .stroke(Color.hykaPurple.opacity(0.3), lineWidth: 1)
         )
     }
     
@@ -1649,7 +1642,7 @@ struct RacePlanView: View {
         HStack(alignment: .top, spacing: HYKATheme.spacingM) {
             Image(systemName: "mountain.2.fill")
                 .font(.system(size: 16))
-                .foregroundColor(Color.purple)
+                .foregroundColor(Color.hykaPurple)
             
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
@@ -2111,25 +2104,18 @@ struct RacePlanView: View {
         let fuelTypesFromDB = try await SupabaseService.fetchFuelTypes(userId: userId)
         let trackPointsFromDB = try await SupabaseService.fetchRacePlanTrackPoints(racePlanId: plan.id)
         let totalDistanceMeters = trackPointsFromDB.last?.distFromStart ?? 0
-        // Round distance to 3 decimal places (1 meter precision) for consistency
-        let computedDistanceKm = round((totalDistanceMeters / 1000.0) * 1000.0) / 1000.0
+        let computedDistanceKm = totalDistanceMeters / 1000.0
         
         // Calculate cumulative elevation gain from all track points
         // This is the proper way to calculate total elevation gain: sum all positive elevation changes
-        // Round elevation values to avoid floating point precision issues
         var cumulativeElevationGain: Double = 0
         if trackPointsFromDB.count > 1 {
             for i in 1..<trackPointsFromDB.count {
-                // Round elevation values to 1 decimal place (10cm precision) for consistency
-                let prevEle = round(trackPointsFromDB[i - 1].ele * 10.0) / 10.0
-                let currEle = round(trackPointsFromDB[i].ele * 10.0) / 10.0
-                let delta = currEle - prevEle
+                let delta = trackPointsFromDB[i].ele - trackPointsFromDB[i - 1].ele
                 if delta > 0 {
                     cumulativeElevationGain += delta
                 }
             }
-            // Round final cumulative gain to avoid floating point accumulation errors
-            cumulativeElevationGain = round(cumulativeElevationGain * 10.0) / 10.0
             print("📊 Calculated cumulative elevation gain: \(String(format: "%.2f", cumulativeElevationGain))m from \(trackPointsFromDB.count) track points")
         }
         
@@ -2220,11 +2206,15 @@ struct RacePlanView: View {
             }
             trackPoints = trackPointsFromDB
             
-            aidStations = finalAidStations
+            // Only overwrite aidStations if we don't have them, or if we are strictly in "segment mode"
+            if aidStations.isEmpty && !finalAidStations.isEmpty {
+                aidStations = finalAidStations
+            }
             
             athleteAnalytics = nil
             pacingSegments = []
-            fuelingStations = []
+            // Keep existing fuelingStations if possible, or reset
+            // fuelingStations = [] 
             aidStationMetrics = metricsDictionary
             
             weatherLocation = locationDisplay
@@ -2293,17 +2283,11 @@ struct RacePlanView: View {
     }
     
     private func selectRace(_ plan: RacePlanSummary) async {
-        // Prevent duplicate selection
-        if await MainActor.run(body: { selectedRace?.id == plan.id && !isLoading }) {
-            return
-        }
-        
         guard let userId = await resolveUserId() else { return }
         
-        // Immediately update selection for instant UI feedback
         await MainActor.run {
-            selectedRace = plan
             isLoading = true
+            selectedRace = plan
         }
         
         do {
@@ -3233,8 +3217,7 @@ struct RacePlanView: View {
             if toStation.name.isEmpty {
                 toStation = AidStation(name: "Station \(index)", distance: toStation.distance, services: toStation.services)
             }
-            // Round segment distance to 3 decimal places (1 meter precision) for consistency
-            let segmentDistance = round(max(0.1, toStation.distance - fromStation.distance) * 1000.0) / 1000.0
+            let segmentDistance = max(0.1, toStation.distance - fromStation.distance)
             let metric = metrics[index] ?? metrics[index - 1] ?? AidStationSegmentMetrics(
                 segmentDistanceM: segmentDistance * 1000.0,
                 elevationGainM: 0,
@@ -3243,8 +3226,7 @@ struct RacePlanView: View {
                 averageHeartRate: nil
             )
             
-            // Round race fraction to 6 decimal places for consistency
-            let raceFraction = totalDistanceKm > 0 ? round((toStation.distance / totalDistanceKm) * 1_000_000.0) / 1_000_000.0 : 0
+            let raceFraction = totalDistanceKm > 0 ? toStation.distance / totalDistanceKm : 0
             let hrPercent: Double
             if raceFraction <= 0.25 {
                 hrPercent = 0.75
@@ -3254,33 +3236,38 @@ struct RacePlanView: View {
                 hrPercent = 0.80
             }
             
-            // Heart rate string - show "Connexion needed" if no provider data
+            // Heart rate string - show "-" if no provider data
             let heartRateString: String
             if let maxHR = maxHeartRate {
                 let targetHR = maxHR * hrPercent
-                heartRateString = "\(Int(round(targetHR))) bpm"
+                let hrValue = Int(round(targetHR))
+                // Ensure we don't show extremely low HR if something is wrong
+                if hrValue > 0 {
+                    heartRateString = "\(hrValue) bpm"
+                } else {
+                    heartRateString = "-"
+                }
                 print("   💓 Segment \(index): HR = \(heartRateString) (maxHR: \(maxHR), percent: \(hrPercent))")
             } else {
                 heartRateString = "-"
                 print("   ⚠️ Segment \(index): No maxHR available - showing '-'")
             }
             
-            // Calculate adjusted pace - show "Connexion needed" if no provider data
+            // Calculate adjusted pace - show "-" if no provider data
             let estimatedPaceString: String
             let sectionHours: Double
             let durationString: String
             
             if let baseP = basePace {
-                // Round all intermediate calculations for consistency
-                let heatMultiplier = round((1 + 0.01 * max(0, temperature - 15.0)) * 1000.0) / 1000.0
-                let fatigueMultiplier = round((1 + analytics.fatigueRatePerHour * cumulativeHours) * 1000.0) / 1000.0
+                let heatMultiplier = 1 + 0.01 * max(0, temperature - 15.0)
+                let fatigueMultiplier = 1 + analytics.fatigueRatePerHour * cumulativeHours
                 // Hill penalty should be per km, not total for segment
                 // 0.5 min per 100m of elevation gain, distributed across segment distance
-                let hillPenaltyPerKm = segmentDistance > 0 ? round((0.5 * (metric.elevationGainM / segmentDistance / 100.0)) * 1000.0) / 1000.0 : 0
-                let adjustedPace = round(max(3.0, baseP * heatMultiplier * fatigueMultiplier + hillPenaltyPerKm) * 1000.0) / 1000.0
-                let sectionMinutes = round(adjustedPace * segmentDistance * 100.0) / 100.0
-                sectionHours = round((sectionMinutes / 60.0) * 1000.0) / 1000.0
-                cumulativeHours = round((cumulativeHours + sectionHours) * 1000.0) / 1000.0
+                let hillPenaltyPerKm = segmentDistance > 0 ? 0.5 * (metric.elevationGainM / segmentDistance / 100.0) : 0
+                let adjustedPace = max(3.0, baseP * heatMultiplier * fatigueMultiplier + hillPenaltyPerKm)
+                let sectionMinutes = adjustedPace * segmentDistance
+                sectionHours = sectionMinutes / 60.0
+                cumulativeHours += sectionHours
                 durationString = formatDuration(hours: sectionHours)
                 estimatedPaceString = formatPace(minutesPerKm: adjustedPace)
             } else {
@@ -3330,27 +3317,23 @@ struct RacePlanView: View {
     ) -> [FuelingStation] {
         guard !sectionPlans.isEmpty else { return [] }
         let temp = temperatureC ?? 15.0
-        // Round total hours to 3 decimal places for consistency
-        let totalHours = round(sectionPlans.reduce(0.0) { $0 + $1.sectionHours } * 1000.0) / 1000.0
+        let totalHours = sectionPlans.reduce(0) { $0 + $1.sectionHours }
         
         // Glycogen stores: ~600 kcal total, depletes over race duration
         let glycogenTotalKcal = 600.0
-        // Round glycogen per hour to 3 decimal places for consistency
-        let glycogenPerHour = totalHours > 0 ? round((glycogenTotalKcal / totalHours) * 1000.0) / 1000.0 : glycogenTotalKcal
+        let glycogenPerHour = totalHours > 0 ? glycogenTotalKcal / totalHours : glycogenTotalKcal
         
         // Fat oxidation: ~5 kcal/hour (minimal during high-intensity)
         let fatKcalPerHour = 5.0
         
         // Total calories needed per hour (from workout data or default)
         // Minimum 500 kcal/h to ensure adequate fueling
-        // Round to 1 decimal place for consistency
-        let caloriesPerHour = round(max(analytics.caloriesPerHour, 500.0) * 10.0) / 10.0
+        let caloriesPerHour = max(analytics.caloriesPerHour, 500.0)
         
         // Carbs needed = Total - Fat - Glycogen
         // Carbs provide 4 kcal per gram
-        // Round intermediate calculations for consistency
-        let carbKcalPerHour = round(max(0, caloriesPerHour - fatKcalPerHour - glycogenPerHour) * 100.0) / 100.0
-        let carbGramsPerHour = round((carbKcalPerHour / 4.0) * 100.0) / 100.0
+        let carbKcalPerHour = max(0, caloriesPerHour - fatKcalPerHour - glycogenPerHour)
+        let carbGramsPerHour = carbKcalPerHour / 4.0
         
         // Water and sodium needs based on temperature and intensity
         // Higher temp = more sweat = more water and sodium needed
@@ -3372,21 +3355,16 @@ struct RacePlanView: View {
             }
         }()
         
-        // Round cumulative hours to 3 decimal places for consistency
         var cumulativeHours: Double = 0
         var stations: [FuelingStation] = []
         for plan in sectionPlans {
-            // Round section hours and cumulative hours for consistency
-            let sectionHours = round(plan.sectionHours * 1000.0) / 1000.0
-            cumulativeHours = round((cumulativeHours + sectionHours) * 1000.0) / 1000.0
-            
-            // Round calculations before converting to Int
+            cumulativeHours += plan.sectionHours
+            let sectionHours = plan.sectionHours
             let carbGrams = Int(round(max(0, carbGramsPerHour * sectionHours)))
             let sodiumMg = Int(round(sodiumPerHour * sectionHours))
             let waterMl = Int(round(waterPerHour * sectionHours))
             
-            // Round elapsed hours for consistency
-            let elapsedHours = round(cumulativeHours * 1000.0) / 1000.0
+            let elapsedHours = cumulativeHours
             let elapsedHourInt = Int(elapsedHours)
             let elapsedMinutes = Int(round((elapsedHours - Double(elapsedHourInt)) * 60))
             let elapsedString = "\(elapsedHourInt)h \(elapsedMinutes)m elapsed"
@@ -3480,22 +3458,7 @@ struct RacePlanView: View {
         
         print("📊 buildAthleteAnalytics: Processing \(workouts.count) workouts")
         
-        // Sort workouts deterministically: by distance (desc), then by start date (desc), then by ID for stability
-        let sortedWorkouts = workouts.sorted { workout1, workout2 in
-            let dist1 = workout1.distanceM ?? 0
-            let dist2 = workout2.distanceM ?? 0
-            if dist1 != dist2 {
-                return dist1 > dist2
-            }
-            // If distances are equal, sort by start date (most recent first)
-            let date1 = workout1.startTime ?? Date.distantPast
-            let date2 = workout2.startTime ?? Date.distantPast
-            if date1 != date2 {
-                return date1 > date2
-            }
-            // If dates are also equal, sort by ID for complete determinism
-            return workout1.id.uuidString < workout2.id.uuidString
-        }
+        let sortedWorkouts = workouts.sorted { ($0.distanceM ?? 0) > ($1.distanceM ?? 0) }
         let focusCount = max(1, Int(Double(sortedWorkouts.count) * 0.2))
         let focusWorkouts = Array(sortedWorkouts.prefix(focusCount))
         
@@ -3508,23 +3471,12 @@ struct RacePlanView: View {
         // Calculate max HR - use actual maxHR from workouts if available, otherwise estimate from averageHR
         let maxHR: Double? = {
             // First, try to get actual maxHR from workouts
-            // Sort deterministically to ensure consistent selection if multiple max values exist
-            let actualMaxHRs = focusWorkouts.compactMap { workout -> (Double, Date, UUID)? in
-                guard let hr = workout.maxHR else { return nil }
-                return (Double(hr), workout.startTime ?? Date.distantPast, workout.id)
-            }.sorted { hr1, hr2 in
-                // Sort by HR (desc), then by date (desc), then by ID for determinism
-                if hr1.0 != hr2.0 {
-                    return hr1.0 > hr2.0
-                }
-                if hr1.1 != hr2.1 {
-                    return hr1.1 > hr2.1
-                }
-                return hr1.2.uuidString < hr2.2.uuidString
+            let actualMaxHRs = focusWorkouts.compactMap { workout -> Double? in
+                workout.maxHR.map { Double($0) }
             }
             
-            if let actualMax = actualMaxHRs.first?.0 {
-                // Use the highest maxHR from workouts (deterministically selected)
+            if let actualMax = actualMaxHRs.max() {
+                // Use the highest maxHR from workouts
                 return actualMax
             }
             
@@ -4312,16 +4264,8 @@ struct LocationPickerModal: View {
             "Cheyenne, Wyoming, USA", "Casper, Wyoming, USA", "Laramie, Wyoming, USA"
         ])
         
-        // Remove duplicates deterministically (preserve first occurrence) and sort
-        var seen = Set<String>()
-        var uniqueLocations: [String] = []
-        for location in locations {
-            if !seen.contains(location) {
-                seen.insert(location)
-                uniqueLocations.append(location)
-            }
-        }
-        return uniqueLocations.sorted()
+        // Remove duplicates and sort
+        return Array(Set(locations)).sorted()
     }()
     
     private var filteredLocations: [String] {
@@ -4758,11 +4702,11 @@ struct PDFFuelingCard: View {
             }
         }
         .padding(16)
-        .background(Color(red: 0.5, green: 0.2, blue: 0.8).opacity(0.1))
+        .background(Color.hykaPurple.opacity(0.1))
         .cornerRadius(8)
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(Color(red: 0.5, green: 0.2, blue: 0.8), lineWidth: 1)
+                .stroke(Color.hykaPurple, lineWidth: 1)
         )
     }
 }
@@ -4899,7 +4843,7 @@ struct DetailRow: View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: icon)
                 .font(.system(size: 14))
-                .foregroundColor(Color(red: 0.5, green: 0.2, blue: 0.8)) // Purple color
+                .foregroundColor(Color.hykaPurple) // HYKA brand purple #A020F0
                 .frame(width: 16, height: 16)
             
             VStack(alignment: .leading, spacing: 2) {

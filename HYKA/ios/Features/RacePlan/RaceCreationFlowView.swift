@@ -96,12 +96,10 @@ struct RaceCreationFlowView: View {
                 if isSaving {
                     Color.black.opacity(0.3)
                         .ignoresSafeArea()
-                    ProgressView("Saving your race…")
-                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                        .padding()
-                        .background(Color.hykaPurple)
-                        .cornerRadius(HYKATheme.cornerRadiusM)
-                        .foregroundColor(.white)
+                    HYKALoadingCard(
+                        message: "Saving your race…",
+                        backgroundColor: Color.hykaPurple
+                    )
                 }
             }
             .navigationBarHidden(true)

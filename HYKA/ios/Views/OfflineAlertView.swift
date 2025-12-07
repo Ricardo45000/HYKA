@@ -109,7 +109,7 @@ struct OfflineAlertModifier: ViewModifier {
                     }
                 }
             }
-            .alert("No Internet Connection", isPresented: $showAlert) {
+            .alert("No Internet Connexion", isPresented: $showAlert) {
                 Button("OK", role: .cancel) { }
             } message: {
                 Text("You're currently offline. The app will show cached data. Some features may not be available.")

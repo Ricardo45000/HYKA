@@ -32,9 +32,9 @@ final class WorkoutDataFetchingService {
                 fetchAfter = lastTimestamp
                 print("📅 Incremental sync: Fetching activities after \(lastTimestamp)")
             } else {
-                // No previous workouts - fetch last 7 days only
-                fetchAfter = Date().addingTimeInterval(-7 * 24 * 60 * 60)
-                print("📅 No previous workouts found - fetching last 7 days only")
+                // No previous workouts - fetch last 30 days
+                fetchAfter = Date().addingTimeInterval(-30 * 24 * 60 * 60)
+                print("📅 No previous workouts found - fetching last 30 days")
             }
         } else {
             // Full historical sync - fetch ALL activities (from 1 year ago to now)
@@ -63,15 +63,27 @@ final class WorkoutDataFetchingService {
             print("   Activities are available in Supabase garmin_activities table")
             return 0 // No activities fetched client-side
             
+        case "strava":
+            // Strava data is also fetched SERVER-SIDE via Edge Functions
+            // Similar architecture to Garmin
+            print("ℹ️  Strava data is fetched automatically by backend via webhooks/edge functions")
+            print("   No client-side data fetching needed for Strava")
+            print("   Activities are available in Supabase strava_activities table")
+            return 0
+            
         case "coros":
             // TODO: Implement Coros fetching when API client is ready
             print("⚠️ Coros API not yet implemented")
             throw WorkoutFetchError.providerNotImplemented("coros")
             
         case "suunto":
-            // TODO: Implement Suunto fetching when API client is ready
-            print("⚠️ Suunto API not yet implemented")
-            throw WorkoutFetchError.providerNotImplemented("suunto")
+            // Suunto data can be fetched SERVER-SIDE via Edge Functions (like Garmin/Strava)
+            // OR client-side using SuuntoAPIClient
+            // For now, we'll rely on backend webhooks for consistency
+            print("ℹ️  Suunto data is fetched automatically by backend via webhooks/edge functions")
+            print("   No client-side data fetching needed for Suunto")
+            print("   Activities are available in Supabase suunto_activities table")
+            return 0
             
         case "polar":
             // Polar uses OAuth 2.0 with Bearer tokens
@@ -165,6 +177,11 @@ final class WorkoutDataFetchingService {
             print("   Read from Supabase garmin_activity_samples table")
             return
             
+        case "strava":
+            // Strava samples are fetched SERVER-SIDE
+            print("ℹ️  Strava samples are fetched automatically by backend")
+            return
+            
         case "coros", "suunto":
             print("⚠️ Sample fetching not yet implemented for \(provider)")
             
@@ -235,6 +252,12 @@ final class WorkoutDataFetchingService {
             print("   No client-side health data fetching needed for Garmin")
             return
             
+        case "strava":
+            // Strava doesn't provide detailed health metrics (weight, VO2 max, etc.) 
+            // in the same way. Basic info might come from athlete profile.
+            print("ℹ️  Strava does not support detailed daily health metrics API")
+            return
+            
         case "coros":
             let client = CorosAPIClient(accessToken: accessToken)
             let metrics = try await client.fetchHealthMetricsRange(startDate: startDate, endDate: endDate)
@@ -259,26 +282,34 @@ final class WorkoutDataFetchingService {
             }
             
         case "suunto":
-            let client = SuuntoAPIClient(accessToken: accessToken)
-            let metrics = try await client.fetchHealthMetricsRange(startDate: startDate, endDate: endDate)
-            
-            print("✅ Fetched \(metrics.count) Suunto health metrics")
-            
-            for metric in metrics {
-                do {
-                    print("💾 Pushing health metric to database: date=\(metric.date), vo2Max=\(metric.vo2Max?.description ?? "nil"), sleepScore=\(metric.sleepScore?.description ?? "nil"), recoveryScore=\(metric.recoveryScore?.description ?? "nil"), restingHR=\(metric.restingHeartRate?.description ?? "nil"), weight=\(metric.weightKg?.description ?? "nil"), calories=\(metric.caloriesConsumed?.description ?? "nil")")
-                    
-                    try await SupabaseService.saveHealthMetrics(
-                        userId: userId,
-                        provider: "suunto",
-                        metrics: metric
-                    )
-                    
-                    print("✅ Health metric saved to database for date: \(metric.date)")
-                    metricsFetched += 1
-                } catch {
-                    print("⚠️ Error saving health metric to database: \(error)")
+            // Suunto health metrics API may not be available or requires different endpoints
+            // Try to fetch, but gracefully handle errors
+            do {
+                let client = SuuntoAPIClient(accessToken: accessToken)
+                let metrics = try await client.fetchHealthMetricsRange(startDate: startDate, endDate: endDate)
+                
+                print("✅ Fetched \(metrics.count) Suunto health metrics")
+                
+                for metric in metrics {
+                    do {
+                        print("💾 Pushing health metric to database: date=\(metric.date)")
+                        
+                        try await SupabaseService.saveHealthMetrics(
+                            userId: userId,
+                            provider: "suunto",
+                            metrics: metric
+                        )
+                        
+                        print("✅ Health metric saved to database for date: \(metric.date)")
+                        metricsFetched += 1
+                    } catch {
+                        print("⚠️ Error saving health metric to database: \(error)")
+                    }
                 }
+            } catch {
+                // Suunto health API not fully supported - this is expected
+                print("ℹ️ Suunto health metrics API not available: \(error.localizedDescription)")
+                print("   This is normal - Suunto may not expose health data via API")
             }
             
         case "polar":
@@ -335,6 +366,11 @@ final class WorkoutDataFetchingService {
             // iOS app no longer pulls training data directly from Garmin APIs
             print("ℹ️  Garmin training data is fetched automatically by backend")
             print("   No client-side training data fetching needed for Garmin")
+            return 0
+            
+        case "strava":
+            // Strava training plans are not available via public API
+            print("ℹ️  Strava does not expose training plans via API")
             return 0
             
         case "coros":

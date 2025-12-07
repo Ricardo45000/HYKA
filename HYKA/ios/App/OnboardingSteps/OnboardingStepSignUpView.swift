@@ -188,7 +188,9 @@ struct OnboardingStepSignUpView: View {
                 .padding(.bottom, HYKATheme.spacingXXL)
             }
         }
+        .scrollDismissesKeyboard(.interactively)
         .background(HYKATheme.Light.background)
+        .dismissKeyboardOnTap()
         .sheet(isPresented: $showSignUpModal) {
             SignUpModal(
                 onSuccess: {

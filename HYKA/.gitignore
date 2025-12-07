@@ -101,3 +101,7 @@ logs/
 *.swp
 *~
 
+# SQL and Markdown files
+*.sql
+*.md
+

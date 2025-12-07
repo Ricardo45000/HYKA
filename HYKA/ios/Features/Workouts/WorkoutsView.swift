@@ -51,7 +51,7 @@ struct WearableConnectionsView: View {
                     await loadExistingConnections()
                 }
             }
-            .alert("Connection Error", isPresented: $showErrorAlert) {
+            .alert("Connexion Error", isPresented: $showErrorAlert) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(errorMessage)
@@ -274,25 +274,9 @@ struct WearableConnectionsView: View {
             Color.black.opacity(0.3)
                 .ignoresSafeArea()
             
-            VStack(spacing: HYKATheme.spacingL) {
-                ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                    .scaleEffect(1.5)
-                
-                if let provider = oauthManager.connectingProvider {
-                    Text("Connecting to \(provider)...")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.white)
-                } else {
-                    Text("Connecting...")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.white)
-                }
-            }
-            .padding(HYKATheme.spacingXXL)
-            .background(
-                RoundedRectangle(cornerRadius: HYKATheme.cornerRadiusL)
-                    .fill(Color.hykaPurple)
+            HYKALoadingCard(
+                message: oauthManager.connectingProvider != nil ? "Connecting to \(oauthManager.connectingProvider!)..." : "Connecting...",
+                backgroundColor: Color.hykaPurple
             )
         }
     }
@@ -331,17 +315,25 @@ struct WearableConnectionsView: View {
             
             do {
                 try await oauthManager.connectProvider(deviceName, from: rootViewController)
+                
+                // Disconnect other devices if any (Enforce Single Connection)
+                let otherDevices = connectedDevices.filter { $0 != deviceName }
+                for otherDevice in otherDevices {
+                    print("🔌 Disconnecting previous device: \(otherDevice)")
+                    await disconnectDevice(otherDevice)
+                }
+                
                 connectedDevices.insert(deviceName)
                 print("✅ Successfully connected to \(deviceName)")
             } catch {
                 if case DeviceOAuthError.notImplemented(let message) = error {
-                    errorMessage = "\(deviceName) connection not yet available. \(message)"
+                    errorMessage = "\(deviceName) connexion not yet available. \(message)"
                 } else {
                     errorMessage = "Failed to connect to \(deviceName): \(error.localizedDescription)"
                 }
                 showErrorAlert = true
                 print("❌ Error connecting to \(deviceName): \(error)")
-                ErrorManager.shared.showError(error, title: "Connection Failed")
+                ErrorManager.shared.showError(error, title: "Connexion Failed")
             }
             
             isLoading = false
@@ -370,7 +362,7 @@ struct WearableConnectionsView: View {
     }
     
     private func isComingSoon(_ deviceName: String) -> Bool {
-        deviceName == "Suunto" || deviceName == "Coros"
+        deviceName == "Coros" // Only Coros is coming soon now
     }
     
     private func loadExistingConnections() async {

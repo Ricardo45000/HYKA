@@ -14,15 +14,10 @@ struct ContentView: View {
                 Color.hykaPurple
                     .ignoresSafeArea()
                 
-                VStack(spacing: 16) {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                        .scaleEffect(1.5)
-                    
-                    Text("Loading...")
-                        .font(HYKATheme.body)
-                        .foregroundColor(.white)
-                }
+                HYKALoadingCard(
+                    message: "Loading...",
+                    backgroundColor: Color.hykaPurple.opacity(0.95)
+                )
             } else if session.isAuthenticated && session.hasCompletedOnboarding {
                 // Returning user - show main app
                 MainTabView()

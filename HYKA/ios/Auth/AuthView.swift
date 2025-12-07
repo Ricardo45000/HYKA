@@ -231,7 +231,9 @@ struct AuthView: View {
                     .padding(.bottom, HYKATheme.spacingXXL)
                 }
             }
+            .scrollDismissesKeyboard(.interactively)
             .background(HYKATheme.Light.background)
+            .dismissKeyboardOnTap()
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {

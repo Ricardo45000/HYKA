@@ -267,6 +267,7 @@ struct EditAidStationsModal: View {
                     .padding(.bottom, HYKATheme.spacingXXL)
                 }
             }
+            .scrollDismissesKeyboard(.interactively)
             .dismissKeyboardOnTap()
             .background(HYKATheme.Light.background)
             .navigationBarTitleDisplayMode(.inline)

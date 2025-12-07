@@ -140,6 +140,23 @@ struct HYKAUIInput: View {
                     .textContentType(textContentType)
                     .autocorrectionDisabled()
                     .submitLabel(keyboardType == .emailAddress ? .next : .done)
+                    // Custom modifier to ensure decimal pad works correctly
+                    .onChange(of: text) { newValue in
+                        if keyboardType == .decimalPad || keyboardType == .numbersAndPunctuation {
+                            // Allow only one decimal point and numbers
+                            let filtered = newValue.filter { "0123456789.,".contains($0) }
+                            // Replace comma with dot for consistent parsing
+                            let normalized = filtered.replacingOccurrences(of: ",", with: ".")
+                            
+                            // Prevent multiple dots
+                            let components = normalized.components(separatedBy: ".")
+                            if components.count > 2 {
+                                text = String(normalized.dropLast())
+                            } else if text != normalized {
+                                text = normalized
+                            }
+                        }
+                    }
             }
         }
         .padding(.horizontal, HYKATheme.spacingM)
@@ -502,6 +519,77 @@ struct HYKAUILabel: View {
                     .foregroundColor(HYKATheme.Light.destructive)
             }
         }
+    }
+}
+
+// MARK: - Loading Card Component
+struct HYKALoadingCard: View {
+    var message: String? = nil
+    var backgroundColor: Color = HYKATheme.Light.card
+    var logoSize: CGFloat = 80
+    
+    @State private var isAnimating = false
+    
+    // Determine if background is dark (for text color)
+    private var isDarkBackground: Bool {
+        backgroundColor == Color.hykaPurple || backgroundColor == Color.hykaPurple.opacity(0.95)
+    }
+    
+    var body: some View {
+        VStack(spacing: HYKATheme.spacingL) {
+            // Animated Logo with pronounced pulsing effect
+            ZStack {
+                // Glow effect behind logo
+                Image("Logo-transparent-black")
+                    .resizable()
+                    .renderingMode(.template)
+                    .scaledToFit()
+                    .frame(width: logoSize, height: logoSize)
+                    .foregroundColor(isDarkBackground ? .white.opacity(0.2) : .black.opacity(0.2))
+                    .blur(radius: isAnimating ? 15 : 8)
+                    .scaleEffect(isAnimating ? 1.2 : 1.0)
+                    .opacity(isAnimating ? 0.6 : 0.3)
+                
+                // Main logo with animation
+                Image("Logo-transparent-black")
+                    .resizable()
+                    .renderingMode(.template)
+                    .scaledToFit()
+                    .frame(width: logoSize, height: logoSize)
+                    .foregroundColor(isDarkBackground ? .white : .black)
+                    .opacity(isAnimating ? 0.4 : 1.0)
+                    .scaleEffect(isAnimating ? 0.8 : 1.0)
+            }
+            .animation(
+                Animation.easeInOut(duration: 0.9)
+                    .repeatForever(autoreverses: true),
+                value: isAnimating
+            )
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    withAnimation {
+                        isAnimating = true
+                    }
+                }
+            }
+            
+            // Optional message
+            if let message = message {
+                Text(message)
+                    .font(HYKATheme.body)
+                    .foregroundColor(isDarkBackground ? .white : HYKATheme.Light.foreground)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .padding(HYKATheme.spacingXXL)
+        .background(backgroundColor)
+        .cornerRadius(HYKATheme.cornerRadiusL)
+        .shadow(
+            color: HYKATheme.cardShadow.color,
+            radius: HYKATheme.cardShadow.radius,
+            x: HYKATheme.cardShadow.x,
+            y: HYKATheme.cardShadow.y
+        )
     }
 }
 

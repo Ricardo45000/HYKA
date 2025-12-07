@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AidStationsView: View {
     @Binding var aidStations: [AidStation]
+    var raceDistance: Double? = nil
     let onNext: () -> Void
     let onBack: () -> Void
     
@@ -13,6 +14,7 @@ struct AidStationsView: View {
     @State private var showContinueConfirmation = false
     @State private var showSignOutAlert = false
     @State private var isSigningOut = false
+    @State private var showDistanceError = false
     @FocusState private var focusedField: Field?
     
     enum Field {
@@ -228,6 +230,11 @@ struct AidStationsView: View {
             .background(HYKATheme.backgroundColor)
             .keyboardDoneToolbar()
         }
+        .alert("Invalid Distance", isPresented: $showDistanceError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Aid station distance must be less than the total race distance.")
+        }
         .alert("Ready to continue?", isPresented: $showContinueConfirmation) {
             Button("Go back and add more", role: .cancel) { }
             Button("Yes, continue") {
@@ -286,6 +293,12 @@ struct AidStationsView: View {
     private func addStation() {
         guard !stationName.isEmpty, let distance = Double(stationDistance) else { return }
         
+        // Validation: Check if distance is greater than race distance
+        if let maxDistance = raceDistance, distance > maxDistance {
+            showDistanceError = true
+            return
+        }
+        
         let services = AidService.ServiceType.allCases.map { serviceType in
             AidService(type: serviceType, isAvailable: selectedServices.contains(serviceType))
         }
@@ -329,9 +342,9 @@ private struct AidStationCardView: View {
             ZStack {
                 Circle()
                     .fill(Color.hykaPurple.opacity(0.12))
-                    .frame(width: 20, height: 20)
+                    .frame(width: 16, height: 16)
                 Image(systemName: "mappin.and.ellipse")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: 8, weight: .semibold))
                     .foregroundColor(Color.hykaPurple)
             }
             
@@ -375,12 +388,12 @@ private struct ServiceBadgeView: View {
         let color = colorForType(type)
         return HStack(spacing: 6) {
             Image(systemName: type.icon)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
             Text(type.rawValue)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
         .foregroundColor(color)
         .background(
             Capsule()
@@ -396,7 +409,7 @@ private struct ServiceBadgeView: View {
     private func colorForType(_ type: AidService.ServiceType) -> Color {
         switch type {
         case .hydration: return Color.blue
-        case .gels: return Color.purple
+        case .gels: return Color.hykaPurple
         case .food: return Color.green
         case .crew: return Color.orange
         }

@@ -140,6 +140,12 @@ struct OnboardingStepGenderView: View {
         } message: {
             Text("Are you sure you want to sign out?")
         }
+        .onAppear {
+            // Pre-fill gender from userProfile (which may have been populated from OAuth)
+            if selectedGender.isEmpty && userProfile.gender != .preferNotToSay {
+                selectedGender = userProfile.gender.rawValue
+            }
+        }
     }
     
     private func handleSignOut() async {

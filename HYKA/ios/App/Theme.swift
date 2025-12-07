@@ -68,9 +68,85 @@ struct HYKATheme {
     static let progressTrackColor = Light.muted
     static let shadowColor = Light.border
     
-    // MARK: - Typography (mapped from CSS variables)
+    // MARK: - Typography (matching hyka.app website fonts)
+    // Fonts: Plus Jakarta Sans (headings) and Inter (body text)
     // Base font size: 14px (reduced by 15% for iPhone 16 Pro)
-    // Font weights: normal (400), medium (500)
+    
+    // Custom font names (PostScript names)
+    // Variable fonts use base name, static fonts use name-weight pattern
+    private static let plusJakartaSansVariable = "PlusJakartaSans"
+    private static let interVariable = "Inter"
+    
+    // Helper function to create custom font with system fallback
+    private static func customFont(name: String, size: CGFloat, weight: Font.Weight, useVariable: Bool = true) -> Font {
+        // Map Font.Weight to weight names for static fonts
+        let weightName: String
+        switch weight {
+        case .ultraLight, .thin:
+            weightName = "Thin"
+        case .light:
+            weightName = "Light"
+        case .regular:
+            weightName = "Regular"
+        case .medium:
+            weightName = "Medium"
+        case .semibold:
+            weightName = "SemiBold"
+        case .bold:
+            weightName = "Bold"
+        case .heavy:
+            weightName = "ExtraBold"
+        case .black:
+            weightName = "Black"
+        @unknown default:
+            weightName = "Regular"
+        }
+        
+        // Try variable font first (iOS 13+), then static fonts
+        var fontNames: [String] = []
+        
+        if useVariable {
+            // Variable fonts - use base name, iOS handles weight internally
+            fontNames.append(name)
+        }
+        
+        // Static font patterns (for Plus Jakarta Sans)
+        if name == plusJakartaSansVariable {
+            fontNames.append(contentsOf: [
+                "\(name)-\(weightName)",
+                "\(name)\(weightName)"
+            ])
+        }
+        
+        // Static font patterns (for Inter - note: Inter static fonts use "Inter_18pt-Weight" format)
+        if name == interVariable {
+            fontNames.append(contentsOf: [
+                "Inter_18pt-\(weightName)",
+                "Inter-\(weightName)",
+                "\(name)-\(weightName)"
+            ])
+        }
+        
+        // Try each pattern until one works
+        for fontName in fontNames {
+            if UIFont(name: fontName, size: size) != nil {
+                return Font.custom(fontName, size: size)
+            }
+        }
+        
+        // Fallback to system font
+        return Font.system(size: size, weight: weight, design: .default)
+    }
+    
+    // Helper function for Plus Jakarta Sans (headings)
+    private static func plusJakartaSansFont(size: CGFloat, weight: Font.Weight) -> Font {
+        return customFont(name: plusJakartaSansVariable, size: size, weight: weight, useVariable: true)
+    }
+    
+    // Helper function for Inter (body text)
+    private static func interFont(size: CGFloat, weight: Font.Weight) -> Font {
+        return customFont(name: interVariable, size: size, weight: weight, useVariable: true)
+    }
     
     // CSS typography sizes (reduced by 15%)
     static let textBase: CGFloat = 14 // 1rem (--text-base) reduced from 16
@@ -83,25 +159,26 @@ struct HYKATheme {
     static let fontWeightMedium: Font.Weight = .medium // 500
     
     // Typography styles (matching CSS h1-h4, p, label, button, input)
-    static let h1 = Font.system(size: text2XL, weight: fontWeightMedium, design: .default) // 20px, medium
-    static let h2 = Font.system(size: textXL, weight: fontWeightMedium, design: .default) // 17px, medium
-    static let h3 = Font.system(size: textLG, weight: fontWeightMedium, design: .default) // 15px, medium
-    static let h4 = Font.system(size: textBase, weight: fontWeightMedium, design: .default) // 14px, medium
-    static let body = Font.system(size: textBase, weight: fontWeightNormal, design: .default) // 14px, normal
-    static let label = Font.system(size: textBase, weight: fontWeightMedium, design: .default) // 14px, medium
-    static let button = Font.system(size: textBase, weight: fontWeightMedium, design: .default) // 14px, medium
-    static let input = Font.system(size: textBase, weight: fontWeightNormal, design: .default) // 14px, normal
+    // Headings use Plus Jakarta Sans, body uses Inter
+    static let h1 = plusJakartaSansFont(size: text2XL, weight: .semibold) // 20px, semibold (600)
+    static let h2 = plusJakartaSansFont(size: textXL, weight: .semibold) // 17px, semibold (600)
+    static let h3 = plusJakartaSansFont(size: textLG, weight: .semibold) // 15px, semibold (600)
+    static let h4 = plusJakartaSansFont(size: textBase, weight: .semibold) // 14px, semibold (600)
+    static let body = interFont(size: textBase, weight: fontWeightNormal) // 14px, regular (400) - Inter
+    static let label = interFont(size: textBase, weight: fontWeightMedium) // 14px, medium (500) - Inter
+    static let button = plusJakartaSansFont(size: textBase, weight: fontWeightMedium) // 14px, medium (500) - Plus Jakarta Sans
+    static let input = interFont(size: textBase, weight: fontWeightNormal) // 14px, regular (400) - Inter
     
     // Legacy aliases for backward compatibility (reduced by 15%)
-    static let largeTitle = Font.system(size: 29, weight: .bold, design: .default)
-    static let title1 = Font.system(size: 24, weight: .bold, design: .default)
+    static let largeTitle = plusJakartaSansFont(size: 29, weight: .bold) // Plus Jakarta Sans
+    static let title1 = plusJakartaSansFont(size: 24, weight: .bold) // Plus Jakarta Sans
     static let title2 = h2
-    static let title3 = Font.system(size: 17, weight: .semibold, design: .default)
-    static let headline = Font.system(size: 14, weight: .semibold, design: .default)
-    static let callout = body
-    static let subheadline = Font.system(size: 13, weight: .regular, design: .default)
-    static let footnote = Font.system(size: 11, weight: .regular, design: .default)
-    static let caption = Font.system(size: 10, weight: .regular, design: .default)
+    static let title3 = plusJakartaSansFont(size: 17, weight: .semibold) // Plus Jakarta Sans
+    static let headline = plusJakartaSansFont(size: 14, weight: .semibold) // Plus Jakarta Sans
+    static let callout = body // Inter
+    static let subheadline = interFont(size: 13, weight: .regular) // Inter
+    static let footnote = interFont(size: 11, weight: .regular) // Inter
+    static let caption = interFont(size: 10, weight: .regular) // Inter
     
     // MARK: - Spacing
     static let spacingXS: CGFloat = 4

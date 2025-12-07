@@ -80,11 +80,24 @@ final class SupabaseService {
         let firstName = (data["first_name"] as? String) ?? ""
         let lastName = (data["last_name"] as? String) ?? ""
         
-        // Parse birth date - handle nullable
+        // Parse birth date - handle nullable and different formats
         let birthDate: Date
-        if let birthDateString = data["birth_date"] as? String,
-           let parsedDate = ISO8601DateFormatter().date(from: birthDateString) {
-            birthDate = parsedDate
+        if let birthDateString = data["birth_date"] as? String {
+            // Try ISO8601 first
+            if let parsedDate = ISO8601DateFormatter().date(from: birthDateString) {
+                birthDate = parsedDate
+            } else {
+                // Try simple YYYY-MM-DD formatter
+                let simpleFormatter = DateFormatter()
+                simpleFormatter.dateFormat = "yyyy-MM-dd"
+                simpleFormatter.timeZone = TimeZone(secondsFromGMT: 0) // Important for DATE types
+                if let parsedDate = simpleFormatter.date(from: birthDateString) {
+                    birthDate = parsedDate
+                } else {
+                    print("⚠️ Could not parse birth date: \(birthDateString)")
+                    birthDate = Date()
+                }
+            }
         } else {
             birthDate = Date() // Default to today if not set
         }
@@ -1663,7 +1676,7 @@ final class SupabaseService {
                 startOffsetS: lap.startOffsetS,
                 durationS: lap.durationS,
                 distanceM: lap.distanceM,
-                elevationGainM: lap.elevationGainM,
+                elevationGainM: lap.elevationGainM ?? 0,
                 avgHR: lap.avgHR,
                 avgPaceSPerKm: lap.avgPaceSPerKm
             )

@@ -56,7 +56,8 @@ struct FITParser {
                 paceSPerKm: paceSPerKm,
                 airTemperatureC: point.temperature,
                 speedMPerS: point.speed,
-                stepsPerMinute: point.cadence // Cadence is steps per minute for running
+                stepsPerMinute: point.cadence, // Cadence is steps per minute for running
+                power: point.power
             )
         }
     }

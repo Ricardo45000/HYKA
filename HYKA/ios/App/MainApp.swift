@@ -5,6 +5,7 @@ import UserNotifications
 
 @main
 struct HYKAApp: App {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject var session = SessionManager()
     @StateObject var pushService = PushNotificationService.shared
     @State private var showSplash = true
@@ -122,6 +123,12 @@ struct HYKAApp: App {
                 // ALWAYS process immediately - don't wait
                 print("🔄 Processing deep link immediately...")
                 handleDeepLink(url)
+            }
+            .onChange(of: scenePhase) { oldPhase, newPhase in
+                if newPhase == .active {
+                    print("📱 App became active - resetting badge count")
+                    PushNotificationService.shared.resetBadgeCount()
+                }
             }
         }
     }

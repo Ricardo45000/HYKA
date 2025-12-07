@@ -8,9 +8,9 @@ final class NetworkMonitor: ObservableObject {
     static let shared = NetworkMonitor()
     
     @Published var isConnected = true
-    @Published var connectionType: ConnectionType = .unknown
+    @Published var connectionType: ConnexionType = .unknown
     
-    enum ConnectionType {
+    enum ConnexionType {
         case wifi
         case cellular
         case ethernet
@@ -39,7 +39,7 @@ final class NetworkMonitor: ObservableObject {
                         self.connectionType = .wifi
                     } else if path.usesInterfaceType(.cellular) {
                         self.connectionType = .cellular
-                    } else if path.usesInterfaceType(.wiredEthernet) {
+                    } else                     if path.usesInterfaceType(.wiredEthernet) {
                         self.connectionType = .ethernet
                     } else {
                         self.connectionType = .unknown
@@ -52,7 +52,7 @@ final class NetworkMonitor: ObservableObject {
                 if wasConnected != self.isConnected {
                     print("🌐 Network status changed: \(self.isConnected ? "ONLINE" : "OFFLINE")")
                     if self.isConnected {
-                        print("   Connection type: \(self.connectionType)")
+                        print("   Connexion type: \(self.connectionType)")
                     }
                 }
             }

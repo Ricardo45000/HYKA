@@ -133,7 +133,7 @@ struct RunningProfileView: View {
                                 HYKAUIInput(
                                     placeholder: "e.g., 120K mountain ultra",
                                     text: $customDistanceInput,
-                                    keyboardType: .default,
+                                    keyboardType: .default, // Keep default since it might be text (e.g. "120K")
                                     textContentType: .none
                                 )
                                 .focused($customDistanceFocused)
@@ -216,9 +216,7 @@ struct RunningProfileView: View {
                 }
             }
             .scrollDismissesKeyboard(.interactively)
-            .onTapGesture {
-                customDistanceFocused = false
-            }
+            .dismissKeyboardOnTap()
             .keyboardDoneToolbar()
         }
         .alert("Sign Out", isPresented: $showSignOutAlert) {

@@ -122,30 +122,26 @@ struct OnboardingStepProfileDetailsView: View {
                         }
                         
                         // Continue button
-                        Button(action: {
-                            if !firstName.isEmpty && !lastName.isEmpty && birthDate != nil {
-                                userProfile.firstName = firstName
-                                userProfile.lastName = lastName
-                                userProfile.birthDate = birthDate ?? Date()
-                                onNext()
+                        HYKAButton(
+                            title: "Continue",
+                            style: .primary,
+                            action: {
+                                if !firstName.isEmpty && !lastName.isEmpty && birthDate != nil {
+                                    userProfile.firstName = firstName
+                                    userProfile.lastName = lastName
+                                    userProfile.birthDate = birthDate ?? Date()
+                                    onNext()
+                                }
                             }
-                        }) {
-                            Text("Continue")
-                                .font(HYKATheme.button)
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 48)
-                                .background(Color.hykaPurple)
-                                .cornerRadius(HYKATheme.radiusMD)
-                        }
+                        )
                         .disabled(firstName.isEmpty || lastName.isEmpty || birthDate == nil)
-                        .opacity((firstName.isEmpty || lastName.isEmpty || birthDate == nil) ? 0.5 : 1.0)
                     }
                     .padding(.horizontal, HYKATheme.spacingXXL)
                     .padding(.top, HYKATheme.spacingL)
                 }
             }
             .scrollDismissesKeyboard(.interactively)
+            .dismissKeyboardOnTap()
         }
         .background(HYKATheme.Light.background)
         .keyboardDoneToolbar()
@@ -164,7 +160,7 @@ struct OnboardingStepProfileDetailsView: View {
                 .navigationTitle("Birthdate")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .navigationBarTrailing) {
+                    ToolbarItem(placement: .confirmationAction) {
                         Button("Done") {
                             showDatePicker = false
                         }
@@ -184,6 +180,16 @@ struct OnboardingStepProfileDetailsView: View {
             }
         } message: {
             Text("Are you sure you want to sign out?")
+        }
+        .onAppear {
+            // Pre-fill from userProfile (which may have been populated from OAuth)
+            if firstName.isEmpty && !userProfile.firstName.isEmpty {
+                firstName = userProfile.firstName
+            }
+            if lastName.isEmpty && !userProfile.lastName.isEmpty {
+                lastName = userProfile.lastName
+            }
+            // Note: Birthdate is not provided by OAuth providers, so we don't pre-fill it
         }
     }
     

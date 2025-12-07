@@ -16,6 +16,22 @@ final class PushNotificationService: NSObject, ObservableObject {
         super.init()
     }
     
+    /// Check current notification authorization status
+    func checkAuthorizationStatus() async {
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        
+        await MainActor.run {
+            self.isAuthorized = (settings.authorizationStatus == .authorized)
+        }
+        
+        if settings.authorizationStatus == .authorized {
+             await MainActor.run {
+                 UIApplication.shared.registerForRemoteNotifications()
+             }
+        }
+    }
+    
     /// Request notification permissions and register for push notifications
     func requestAuthorization() async {
         let center = UNUserNotificationCenter.current()
@@ -86,10 +102,10 @@ final class PushNotificationService: NSObject, ObservableObject {
                 updatedAt: updatedAt
             )
             
-            // Use upsert without options - Supabase will handle conflicts based on unique constraint
+            // Use upsert with onConflict parameter to resolve the duplicate key error
             let _ = try await Supa.client
                 .from("user_devices")
-                .upsert(deviceData)
+                .upsert(deviceData, onConflict: "user_id,device_token")
                 .execute()
             
             print("✅ Device token saved to Supabase")
@@ -112,6 +128,21 @@ final class PushNotificationService: NSObject, ObservableObject {
                     UIApplication.shared.open(url)
                 }
             }
+        }
+    }
+    
+    /// Reset the app badge count to zero
+    func resetBadgeCount() {
+        DispatchQueue.main.async {
+            UNUserNotificationCenter.current().setBadgeCount(0) { error in
+                if let error = error {
+                    print("❌ Failed to reset badge count: \(error)")
+                } else {
+                    print("✅ Badge count reset to 0")
+                }
+            }
+            // Fallback for immediate UI update
+            UIApplication.shared.applicationIconBadgeNumber = 0
         }
     }
 }

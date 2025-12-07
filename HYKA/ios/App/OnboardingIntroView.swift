@@ -49,7 +49,7 @@ struct OnboardingIntroView: View {
                         Spacer()
                         
                         // Sliding content area - only text and card
-                        TabView(selection: $currentIntroStep) {
+                TabView(selection: $currentIntroStep) {
                             // Step 1: Route Analysis
                             VStack(spacing: 0) {
                                 // Card
@@ -238,7 +238,7 @@ struct OnboardingIntroView: View {
                                 .frame(maxWidth: 360)
                                 .padding(.horizontal, 24)
                             }
-                            .tag(2)
+                    .tag(2)
                             
                             // Step 3: Nutrition Plan
                             VStack(spacing: 0) {
@@ -358,10 +358,10 @@ struct OnboardingIntroView: View {
                                 .frame(maxWidth: 360)
                                 .padding(.horizontal, 24)
                             }
-                            .tag(3)
-                        }
-                        .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
-                        .opacity(transitionOpacity)
+                    .tag(3)
+                }
+                .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
+                .opacity(transitionOpacity)
                         
                         Spacer()
                         

@@ -77,6 +77,7 @@ struct OnboardingFlowView: View {
                             
                             AidStationsView(
                                 aidStations: $aidStations,
+                                raceDistance: raceDetails.distance,
                                 onNext: nextStep,
                                 onBack: previousStep
                             )
@@ -101,19 +102,9 @@ struct OnboardingFlowView: View {
                     Color.black.opacity(0.4)
                         .ignoresSafeArea()
                     
-                    VStack(spacing: HYKATheme.spacingL) {
-                        ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                            .scaleEffect(1.5)
-                        
-                        Text("Saving your data...")
-                            .font(HYKATheme.h4)
-                            .foregroundColor(.white)
-                    }
-                    .padding(HYKATheme.spacingXXL)
-                    .background(
-                        RoundedRectangle(cornerRadius: HYKATheme.cornerRadiusL)
-                            .fill(Color.hykaPurple)
+                    HYKALoadingCard(
+                        message: "Saving your data...",
+                        backgroundColor: Color.hykaPurple
                     )
                 }
             }
@@ -123,6 +114,21 @@ struct OnboardingFlowView: View {
             .withErrorDisplay()
         }
         .keyboardDoneToolbar()
+        .onAppear {
+            // Pre-fill user profile from OAuth data if available
+            if let oauthInfo = session.oauthUserInfo {
+                if let firstName = oauthInfo.firstName, !firstName.isEmpty {
+                    userProfile.firstName = firstName
+                }
+                if let lastName = oauthInfo.lastName, !lastName.isEmpty {
+                    userProfile.lastName = lastName
+                }
+                if let gender = oauthInfo.gender {
+                    userProfile.gender = gender
+                }
+                print("✅ Pre-filled userProfile from OAuth: firstName=\(userProfile.firstName), lastName=\(userProfile.lastName), gender=\(userProfile.gender.rawValue)")
+            }
+        }
     }
     
     private var currentStepTitle: String {
