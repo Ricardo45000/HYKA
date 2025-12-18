@@ -20,20 +20,6 @@ DerivedData/
 *.pbxuser
 *.moved-aside
 *.xcuserstate
-*.xcscmblueprint
-*.hmap
-*.ipa
-*.dSYM.zip
-*.dSYM
-DerivedData/
-*.swp
-*~.nib
-*.mode1v3
-*.mode2v3
-*.perspectivev3
-*.pbxuser
-*.moved-aside
-*.xcuserstate
 project.xcworkspace/xcuserdata/
 xcuserdata/
 
@@ -65,9 +51,30 @@ config.json
 
 # iOS Config file (contains actual keys)
 ios/Config/Config.swift
+ios/Config/*.swift
+!ios/Config/Config.example.swift
 
-# Note: Config.example.swift should be in the build target
-# but Config.swift should NOT be committed (it's gitignored)
+# API Keys and Private Keys
+*.p8
+*.p12
+*.key
+*.pem
+AuthKey_*.p8
+*_key.p8
+*_private.pem
+
+# Shell scripts with hardcoded paths/keys
+setup_apns_key.sh
+setup_apns_quick.sh
+switch_to_production_key.sh
+fix_apns_environment.sh
+check_apns_config.sh
+
+# Credential documentation files
+*CREDENTIALS*.md
+*_SETUP.md
+SUUNTO_CREDENTIALS*.md
+*CREDENTIALS*.md
 
 # macOS
 .DS_Store
@@ -101,7 +108,8 @@ logs/
 *.swp
 *~
 
-# SQL and Markdown files
+# SQL files (may contain sensitive data)
 *.sql
-*.md
 
+# Note: Config.example.swift should be in the build target
+# but Config.swift should NOT be committed (it's gitignored)
