@@ -47,7 +47,6 @@ struct EditFuelTypeReferenceModal: View {
                 contentView
             }
             .scrollDismissesKeyboard(.interactively)
-            .dismissKeyboardOnTap()
             .background(HYKATheme.Light.background)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

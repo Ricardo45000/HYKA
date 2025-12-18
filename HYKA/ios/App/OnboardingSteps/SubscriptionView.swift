@@ -114,6 +114,7 @@ struct SubscriptionView: View {
                     .padding(.bottom, HYKATheme.spacingXXL)
                 }
             }
+            .scrollDismissesKeyboard(.interactively)
             .background(HYKATheme.backgroundColor)
         }
         .alert("Sign Out", isPresented: $showSignOutAlert) {

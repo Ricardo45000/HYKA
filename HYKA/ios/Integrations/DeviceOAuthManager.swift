@@ -65,16 +65,24 @@ final class DeviceOAuthManager: ObservableObject {
             
             
             // Save connection to database first (so user can manually sync if initial fetch fails)
-            try await SupabaseService.saveOAuthConnection(
-                userId: userId,
-                provider: provider.lowercased(),
-                accessToken: accessToken,
-                refreshToken: refreshToken,
-                tokenSecret: tokenSecret,
-                expiresAt: expiresAt
-            )
-            connectionSaved = true
-            print("✅ OAuth connection saved for \(provider)")
+            // NOTE: For Strava, the Edge Function (strava-auth-callback) already saves to strava_connections
+            // So we skip the iOS save to avoid duplicate/conflicting entries
+            if provider.lowercased() != "strava" {
+                try await SupabaseService.saveOAuthConnection(
+                    userId: userId,
+                    provider: provider.lowercased(),
+                    accessToken: accessToken,
+                    refreshToken: refreshToken,
+                    tokenSecret: tokenSecret,
+                    expiresAt: expiresAt
+                )
+                connectionSaved = true
+                print("✅ OAuth connection saved for \(provider)")
+            } else {
+                // Strava connection is already saved by strava-auth-callback Edge Function
+                connectionSaved = true
+                print("✅ Strava connection already saved by Edge Function")
+            }
             
             // Trigger server-side historical backfill (30 days)
             // This happens automatically after user successfully connects and agrees to share data
@@ -91,10 +99,24 @@ final class DeviceOAuthManager: ObservableObject {
                             message: "Garmin historical data sync has started. Your activities will appear in about 15 minutes."
                         )
                     }
+                } else {
+                    // For other providers, show a brief success message
+                    await MainActor.run {
+                        ErrorManager.shared.showError(
+                            title: "Sync Started",
+                            message: "\(provider.capitalized) historical data sync has started. Your activities will appear shortly."
+                        )
+                    }
                 }
             } catch {
-                print("⚠️ Error triggering historical sync for \(provider): \(error)")
-                // Don't show error to user - this is a background operation
+                print("❌ Error triggering historical sync for \(provider): \(error)")
+                // Show error to user so they know sync failed
+                await MainActor.run {
+                    ErrorManager.shared.showError(
+                        title: "Sync Failed",
+                        message: "Failed to start \(provider.capitalized) historical sync. Please try syncing manually from the app."
+                    )
+                }
             }
             
             // Automatically fetch and store health metrics after connection - push to database immediately
@@ -128,7 +150,7 @@ final class DeviceOAuthManager: ObservableObject {
             
             errorMessage = error.localizedDescription
             print("❌ Error connecting to \(provider): \(error)")
-            ErrorManager.shared.showError(error, title: "Connexion Failed")
+            ErrorManager.shared.showError(error, title: "Connection Failed")
             throw error
         }
     }

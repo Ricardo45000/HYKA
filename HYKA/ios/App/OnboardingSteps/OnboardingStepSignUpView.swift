@@ -190,7 +190,6 @@ struct OnboardingStepSignUpView: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .background(HYKATheme.Light.background)
-        .dismissKeyboardOnTap()
         .sheet(isPresented: $showSignUpModal) {
             SignUpModal(
                 onSuccess: {

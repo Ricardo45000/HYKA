@@ -27,15 +27,23 @@ serve(async (req) => {
 
     // Refresh Token Logic
     let accessToken = connection.access_token
-    if (isTokenExpired(connection.expires_at)) {
+    const expiresAt = connection.token_expires_at ? new Date(connection.token_expires_at) : null
+    const expiresAtTimestamp = expiresAt ? Math.floor(expiresAt.getTime() / 1000) : null
+    
+    if (expiresAtTimestamp && isTokenExpired(expiresAtTimestamp)) {
         console.log("🔄 Refreshing Strava token...")
         const tokens = await refreshStravaToken(connection.refresh_token)
         accessToken = tokens.access_token
         
+        // Convert expires_at from Unix timestamp to ISO string
+        const newExpiresAt = tokens.expires_at 
+          ? new Date(tokens.expires_at * 1000).toISOString() 
+          : null
+        
         await supabase.from('strava_connections').update({
             access_token: tokens.access_token,
             refresh_token: tokens.refresh_token,
-            expires_at: tokens.expires_at,
+            token_expires_at: newExpiresAt,
             updated_at: new Date().toISOString()
         }).eq('user_id', user_id)
     }
@@ -59,34 +67,47 @@ serve(async (req) => {
 
     // Process each activity
     let processed = 0
+    let errors = 0
     for (const activity of activities) {
-        // Call strava-activity-store
-        // Note: strava-activity-store normally handles webhook events (object_id), 
-        // but we can adapt it or call it with a manufactured payload if it supports it.
-        // Actually, strava-activity-store expects: { object_id, owner_id, ... }
-        // Or we can just call the logic directly if we want, but calling the function is cleaner if adaptable.
-        
-        // Let's invoke strava-activity-store with a simulated webhook payload or extended payload
-        const payload = {
-            object_id: activity.id,
-            owner_id: activity.athlete.id,
-            aspect_type: 'create', // Simulate creation
-            object_type: 'activity',
-            manual_sync: true // Flag to indicate manual sync
+        try {
+            // Call strava-activity-store with direct format (user_id + activity_id)
+            // The function now supports both webhook format and direct format
+            const payload = {
+                user_id: user_id, // Direct format - we already have user_id
+                activity_id: activity.id.toString() // Direct format
+            }
+
+            const storeResponse = await fetch(`${supabaseUrl}/functions/v1/strava-activity-store`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${supabaseKey}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            })
+
+            if (!storeResponse.ok) {
+                const errorText = await storeResponse.text()
+                console.error(`❌ Failed to store activity ${activity.id}: ${storeResponse.status} - ${errorText}`)
+                errors++
+            } else {
+                console.log(`✅ Stored activity ${activity.id}`)
+                processed++
+            }
+        } catch (error) {
+            console.error(`❌ Error processing activity ${activity.id}:`, error)
+            errors++
         }
-
-        await fetch(`${supabaseUrl}/functions/v1/strava-activity-store`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${supabaseKey}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload)
-        })
-        processed++
     }
+    
+    console.log(`📊 Sync complete: ${processed} stored, ${errors} errors`)
 
-    return new Response(JSON.stringify({ success: true, count: processed }), { headers: { 'Content-Type': 'application/json' } })
+    return new Response(JSON.stringify({ 
+      success: true, 
+      count: processed,
+      errors: errors,
+      total: activities.length
+    }), { headers: { 'Content-Type': 'application/json' } })
 
   } catch (error) {
     console.error("❌ Error:", error)

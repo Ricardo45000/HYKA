@@ -123,12 +123,38 @@ async function sendAPNsNotification(
     
     if (!response.ok) {
       const errorText = await response.text()
+      let errorData: any = {}
+      try {
+        errorData = JSON.parse(errorText)
+      } catch (e) {
+        // Not JSON, use raw text
+      }
+      
       console.error(`❌ APNs error: ${response.status} - ${errorText}`)
+      console.error(`   Device token: ${deviceToken.substring(0, 8)}...${deviceToken.substring(deviceToken.length - 8)}`)
+      console.error(`   APNs environment: ${APNS_ENVIRONMENT}`)
+      console.error(`   Bundle ID: ${APNS_BUNDLE_ID}`)
+      console.error(`   APNs URL: ${APNS_URL}`)
       
       // Handle specific APNs errors
       if (response.status === 410) {
         console.log(`ℹ️ Device token ${deviceToken.substring(0, 8)}... is no longer valid (uninstalled)`)
         // Ideally remove from database here
+      } else if (response.status === 400 && errorData.reason === 'BadDeviceToken') {
+        console.error(`❌ BadDeviceToken - Possible causes:`)
+        console.error(`   1. Device token is invalid or expired`)
+        console.error(`   2. Environment mismatch: Token is for ${APNS_ENVIRONMENT === 'development' ? 'sandbox' : 'production'}, but app might be using ${APNS_ENVIRONMENT === 'development' ? 'production' : 'sandbox'}`)
+        console.error(`   3. Bundle ID mismatch: Expected ${APNS_BUNDLE_ID}`)
+        console.error(`   4. Token format is incorrect (should be 64 hex characters)`)
+        console.error(`   Token length: ${deviceToken.length} characters`)
+      } else if (response.status === 403 && errorData.reason === 'BadEnvironmentKeyInToken') {
+        console.error(`❌ BadEnvironmentKeyInToken - Key type doesn't match environment:`)
+        console.error(`   Current environment: ${APNS_ENVIRONMENT}`)
+        console.error(`   Current APNs URL: ${APNS_URL}`)
+        console.error(`   Fix: Set APNS_ENVIRONMENT to match your key type:`)
+        console.error(`   - Development/Sandbox key → APNS_ENVIRONMENT=development`)
+        console.error(`   - Production key → APNS_ENVIRONMENT=production`)
+        console.error(`   Run: npx supabase secrets set APNS_ENVIRONMENT=<development|production> --project-ref gvfhtiljkybbrbxoyqsq`)
       }
       
       return false
@@ -163,10 +189,10 @@ serve(async (req) => {
     const body = await req.json()
     const userId = body.user_id || body.userId
     const activityId = body.activity_id || body.activityId
-    const activityName = body.activity_name || "Your Run"
-    const activityType = body.activity_type || "Running"
-    const distanceMeters = body.distance_meters || 0
-    const durationSeconds = body.duration_seconds || 0
+    let activityName = body.activity_name || "Your Run"
+    let activityType = body.activity_type || "Running"
+    let distanceMeters = body.distance_meters || 0
+    let durationSeconds = body.duration_seconds || 0
     
     if (!userId || !activityId) {
       return new Response(JSON.stringify({ 
@@ -184,6 +210,31 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const supabase = createClient(supabaseUrl, supabaseKey)
+    
+    // If distance/duration are missing or zero, fetch from database
+    if (distanceMeters === 0 || durationSeconds === 0) {
+        console.log("⚠️ Missing distance/duration in payload, fetching from database...")
+        const { data: activity, error: activityError } = await supabase
+            .from('garmin_activities')
+            .select('distance_meters, duration_seconds, activity_name, activity_type')
+            .eq('id', activityId)
+            .single()
+        
+        if (!activityError && activity) {
+            if (distanceMeters === 0 && activity.distance_meters) {
+                distanceMeters = activity.distance_meters
+                console.log(`   ✅ Fetched distance: ${distanceMeters}m`)
+            }
+            if (durationSeconds === 0 && activity.duration_seconds) {
+                durationSeconds = activity.duration_seconds
+                console.log(`   ✅ Fetched duration: ${durationSeconds}s`)
+            }
+            if (activity.activity_name) activityName = activity.activity_name
+            if (activity.activity_type) activityType = activity.activity_type
+        } else {
+            console.error("   ❌ Could not fetch activity from database:", activityError)
+        }
+    }
     
     // 1. Get user's device tokens
     console.log("🔍 Looking up device tokens for user:", userId)
@@ -228,7 +279,7 @@ serve(async (req) => {
     }
     
     const title = `Distance: ${distanceKm} km - Pace: ${paceString} m/km`
-    const bodyText = "Check how your run influenced your digital twin"
+    const bodyText = "Check your HYKA digital twin for your upcoming event"
     
     // 3. Prepare deep link data
     const deepLinkData = {

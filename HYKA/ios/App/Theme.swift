@@ -82,7 +82,9 @@ struct HYKATheme {
         // Map Font.Weight to weight names for static fonts
         let weightName: String
         switch weight {
-        case .ultraLight, .thin:
+        case .ultraLight:
+            weightName = "Thin"
+        case .thin:
             weightName = "Thin"
         case .light:
             weightName = "Light"
@@ -98,7 +100,7 @@ struct HYKATheme {
             weightName = "ExtraBold"
         case .black:
             weightName = "Black"
-        @unknown default:
+        default:
             weightName = "Regular"
         }
         

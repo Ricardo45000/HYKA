@@ -226,19 +226,19 @@ struct RaceCreationFlowView: View {
         guard !trackPoints.isEmpty else {
             return stations.enumerated().map { index, station in
                 if index == 0 {
-                    return AidStationSegmentMetrics(segmentDistanceM: 0, elevationGainM: 0, elevationLossM: 0, estimatedTimeSeconds: 0, averageHeartRate: nil)
+                    return AidStationSegmentMetrics(segmentDistanceM: 0, elevationGainM: 0, elevationLossM: 0, estimatedTimeSeconds: 0, averageHeartRate: nil, targetHeartRate: nil)
                 } else {
                     let previous = stations[index - 1]
                     let segmentDistanceM = max(0, (station.distance - previous.distance) * 1000)
                     let estimated = (segmentDistanceM / 1000.0) * Double(defaultPaceSecondsPerKm)
-                    return AidStationSegmentMetrics(segmentDistanceM: segmentDistanceM, elevationGainM: 0, elevationLossM: 0, estimatedTimeSeconds: estimated, averageHeartRate: nil)
+                    return AidStationSegmentMetrics(segmentDistanceM: segmentDistanceM, elevationGainM: 0, elevationLossM: 0, estimatedTimeSeconds: estimated, averageHeartRate: nil, targetHeartRate: nil)
                 }
             }
         }
         var metrics: [AidStationSegmentMetrics] = []
         for index in stations.indices {
             if index == 0 {
-                metrics.append(AidStationSegmentMetrics(segmentDistanceM: 0, elevationGainM: 0, elevationLossM: 0, estimatedTimeSeconds: 0, averageHeartRate: nil))
+                metrics.append(AidStationSegmentMetrics(segmentDistanceM: 0, elevationGainM: 0, elevationLossM: 0, estimatedTimeSeconds: 0, averageHeartRate: nil, targetHeartRate: nil))
             } else {
                 let startDistanceM = stations[index - 1].distance * 1000.0
                 let endDistanceM = stations[index].distance * 1000.0
@@ -252,7 +252,7 @@ struct RaceCreationFlowView: View {
     
     private func computeSegmentMetrics(trackPoints: [TrackPoint], startIndex: Int, endIndex: Int) -> AidStationSegmentMetrics {
         guard startIndex < endIndex, endIndex < trackPoints.count else {
-            return AidStationSegmentMetrics(segmentDistanceM: 0, elevationGainM: 0, elevationLossM: 0, estimatedTimeSeconds: 0, averageHeartRate: nil)
+            return AidStationSegmentMetrics(segmentDistanceM: 0, elevationGainM: 0, elevationLossM: 0, estimatedTimeSeconds: 0, averageHeartRate: nil, targetHeartRate: nil)
         }
         let startPoint = trackPoints[startIndex]
         let endPoint = trackPoints[endIndex]
@@ -275,7 +275,7 @@ struct RaceCreationFlowView: View {
         }
         let estimatedTime = (segmentDistanceM / 1000.0) * Double(defaultPaceSecondsPerKm)
         let averageHR = hrCount > 0 ? hrTotal / hrCount : nil
-        return AidStationSegmentMetrics(segmentDistanceM: segmentDistanceM, elevationGainM: gain, elevationLossM: loss, estimatedTimeSeconds: estimatedTime, averageHeartRate: averageHR)
+        return AidStationSegmentMetrics(segmentDistanceM: segmentDistanceM, elevationGainM: gain, elevationLossM: loss, estimatedTimeSeconds: estimatedTime, averageHeartRate: averageHR, targetHeartRate: nil)
     }
     
     private func nearestTrackPointIndex(for distanceM: Double, in trackPoints: [TrackPoint]) -> Int {

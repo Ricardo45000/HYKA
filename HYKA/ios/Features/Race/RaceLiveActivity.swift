@@ -22,6 +22,7 @@ struct RaceLiveActivityView: View {
                 }
                 .frame(minHeight: UIScreen.main.bounds.height - 100)
             }
+            .scrollDismissesKeyboard(.interactively)
             .ignoresSafeArea(edges: .horizontal)
         }
         .fileImporter(

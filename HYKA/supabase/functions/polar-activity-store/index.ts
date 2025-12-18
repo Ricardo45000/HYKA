@@ -53,12 +53,13 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey)
 
     let accessToken = body.access_token
+    let refreshToken: string | null = null
 
     // If no token provided, fetch from DB
     if (!accessToken) {
         const { data: connection, error: connError } = await supabase
         .from('polar_connections')
-        .select('access_token')
+        .select('access_token, refresh_token, token_expires_at')
         .eq('user_id', userId)
         .single()
 
@@ -66,6 +67,66 @@ serve(async (req) => {
         throw new Error(`Polar connection not found: ${connError?.message}`)
         }
         accessToken = connection.access_token
+        refreshToken = connection.refresh_token
+        
+        // Check if token needs refresh
+        const expiresAt = connection.token_expires_at ? new Date(connection.token_expires_at) : null
+        const needsRefresh = expiresAt && (expiresAt <= new Date(Date.now() + 5 * 60 * 1000))
+        
+        if (needsRefresh && refreshToken) {
+          console.log("🔄 Refreshing Polar token (expires at:", expiresAt?.toISOString(), ")...")
+          
+          try {
+            const clientId = Deno.env.get('POLAR_CLIENT_ID')
+            const clientSecret = Deno.env.get('POLAR_CLIENT_SECRET')
+            
+            if (!clientId || !clientSecret) {
+              console.error("❌ POLAR_CLIENT_ID or POLAR_CLIENT_SECRET not set")
+            } else {
+              const basicAuth = btoa(`${clientId}:${clientSecret}`)
+              
+              const refreshResponse = await fetch("https://polarremote.com/v2/oauth2/token", {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Basic ${basicAuth}`,
+                  'Content-Type': 'application/x-www-form-urlencoded',
+                  'Accept': 'application/json'
+                },
+                body: new URLSearchParams({
+                  grant_type: 'refresh_token',
+                  refresh_token: refreshToken
+                }).toString()
+              })
+              
+              if (refreshResponse.ok) {
+                const refreshData = await refreshResponse.json()
+                accessToken = refreshData.access_token
+                refreshToken = refreshData.refresh_token || refreshToken
+                const newExpiresAt = refreshData.expires_in 
+                  ? new Date(Date.now() + refreshData.expires_in * 1000).toISOString()
+                  : null
+                
+                console.log("✅ Polar token refreshed successfully")
+                
+                // Update connection in database
+                await supabase
+                  .from('polar_connections')
+                  .update({
+                    access_token: accessToken,
+                    refresh_token: refreshToken,
+                    token_expires_at: newExpiresAt,
+                    updated_at: new Date().toISOString()
+                  })
+                  .eq('user_id', userId)
+              } else {
+                const errorText = await refreshResponse.text()
+                console.error("❌ Polar token refresh failed:", refreshResponse.status, errorText)
+              }
+            }
+          } catch (refreshError) {
+            console.error("❌ Error refreshing Polar token:", refreshError)
+          }
+        }
     }
     
     if (!accessToken) {
@@ -183,8 +244,36 @@ serve(async (req) => {
                         created_at: new Date().toISOString()
                     }, { onConflict: 'activity_id' })
                     
-                if (fileError) console.error("❌ Failed to store TCX file:", fileError)
-                else console.log("💾 TCX file stored in polar_fit_files")
+                if (fileError) {
+                    console.error("❌ Failed to store TCX file:", fileError)
+                } else {
+                    console.log("💾 TCX file stored in polar_fit_files")
+                    
+                    // Trigger TCX processor
+                    console.log("🔄 Triggering TCX processor...")
+                    const processorUrl = `${supabaseUrl}/functions/v1/polar-file-processor`
+                    fetch(processorUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${supabaseKey}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            activity_id: storedActivity.id,
+                            file_data: fileData,
+                            file_format: 'tcx'
+                        })
+                    }).then(async (res) => {
+                        if (res.ok) {
+                            console.log(`✅ TCX processor triggered: ${res.status}`)
+                        } else {
+                            const text = await res.text()
+                            console.error(`❌ TCX processor failed: ${res.status} - ${text}`)
+                        }
+                    }).catch(err => {
+                        console.error("❌ Error calling TCX processor:", err)
+                    })
+                }
             }
         } else {
             console.warn(`⚠️ Failed to download TCX file: ${fileResponse.status}`)

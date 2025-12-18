@@ -271,7 +271,6 @@ struct ProfileInformationView: View {
             .padding(.vertical, HYKATheme.spacingXXL)
         }
         .scrollDismissesKeyboard(.interactively)
-        .dismissKeyboardOnTap()
         .background(HYKATheme.backgroundColor)
         .navigationTitle("Profile Information")
         .navigationBarTitleDisplayMode(.large)

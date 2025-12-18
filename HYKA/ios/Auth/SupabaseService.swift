@@ -662,7 +662,7 @@ final class SupabaseService {
     
     private static func computeSegmentMetrics(trackPoints: [TrackPoint], startIndex: Int, endIndex: Int, paceSecondsPerKm: Double) -> AidStationSegmentMetrics {
         guard startIndex < endIndex, endIndex < trackPoints.count else {
-            return AidStationSegmentMetrics(segmentDistanceM: 0, elevationGainM: 0, elevationLossM: 0, estimatedTimeSeconds: 0, averageHeartRate: nil)
+            return AidStationSegmentMetrics(segmentDistanceM: 0, elevationGainM: 0, elevationLossM: 0, estimatedTimeSeconds: 0, averageHeartRate: nil, targetHeartRate: nil)
         }
         let startPoint = trackPoints[startIndex]
         let endPoint = trackPoints[endIndex]
@@ -695,7 +695,7 @@ final class SupabaseService {
         let estimatedTimeSeconds = round(distanceKm * paceSecondsPerKm)
         // Round average HR to nearest integer for consistency, then convert to Double
         let averageHR = hrCount > 0 ? Double(round(hrTotal / hrCount)) : nil
-        return AidStationSegmentMetrics(segmentDistanceM: segmentDistanceM, elevationGainM: gain, elevationLossM: loss, estimatedTimeSeconds: estimatedTimeSeconds, averageHeartRate: averageHR)
+        return AidStationSegmentMetrics(segmentDistanceM: segmentDistanceM, elevationGainM: gain, elevationLossM: loss, estimatedTimeSeconds: estimatedTimeSeconds, averageHeartRate: averageHR, targetHeartRate: nil)
     }
     
     private static func buildAidStationsAndMetrics(from trackPoints: [TrackPoint], paceSecondsPerKm: Double) -> ([AidStation], [AidStationSegmentMetrics]) {
@@ -738,7 +738,7 @@ final class SupabaseService {
             let services = AidService.ServiceType.allCases.map { AidService(type: $0, isAvailable: false) }
             aidStations.append(AidStation(name: name, distance: distanceKm, services: services))
             if idx == 0 {
-                segmentMetrics.append(AidStationSegmentMetrics(segmentDistanceM: 0, elevationGainM: 0, elevationLossM: 0, estimatedTimeSeconds: 0, averageHeartRate: nil))
+                segmentMetrics.append(AidStationSegmentMetrics(segmentDistanceM: 0, elevationGainM: 0, elevationLossM: 0, estimatedTimeSeconds: 0, averageHeartRate: nil, targetHeartRate: nil))
             } else {
                 let metric = computeSegmentMetrics(trackPoints: trackPoints, startIndex: checkpointIndices[idx - 1], endIndex: trackIndex, paceSecondsPerKm: paceSecondsPerKm)
                 segmentMetrics.append(metric)
@@ -1707,7 +1707,7 @@ final class SupabaseService {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         
         if let array = json as? [[String: Any]], let first = array.first,
-           let startString = first["start_time"] as? String,
+           let startString = first["start_date"] as? String ?? first["start_time"] as? String,
            let startTime = formatter.date(from: startString) ?? ISO8601DateFormatter().date(from: startString) {
             return startTime
         }
@@ -1734,7 +1734,7 @@ final class SupabaseService {
                 .from("unified_activities")
                 .select()
                 .eq("user_id", value: userId.uuidString)
-                .order("start_time", ascending: false)
+                .order("start_date", ascending: false) // unified_activities uses start_date
                 .limit(100) // Limit to most recent 100 activities
                 .execute()
             
@@ -1765,21 +1765,24 @@ final class SupabaseService {
                     print("⚠️ fetchWorkouts: Invalid activity ID: \(dict["id"] ?? "nil")")
                     return nil
                 }
-                // unified_activities uses different field names
+                // unified_activities uses different field names - handle all variations
                 let distance = dict["distance_meters"] as? Double ?? dict["distance_m"] as? Double
-                let elapsed = dict["duration_seconds"] as? Int ?? dict["elapsed_seconds"] as? Int
+                // Handle elapsed_time (from unified_activities) vs duration_seconds/elapsed_seconds
+                let elapsed = dict["elapsed_time"] as? Int ?? dict["duration_seconds"] as? Int ?? dict["elapsed_seconds"] as? Int
                 let avgHR = dict["average_heart_rate"] as? Int ?? dict["avg_hr"] as? Int
                 let maxHR = dict["max_heart_rate"] as? Int ?? dict["max_hr"] as? Int
                 let calories = dict["calories"] as? Int ?? dict["calories_consumed"] as? Int
                 let startTime: Date?
-                if let startString = dict["start_time"] as? String {
+                // Handle start_date (from unified_activities) vs start_time
+                if let startString = dict["start_date"] as? String ?? dict["start_time"] as? String {
                     startTime = formatter.date(from: startString) ?? ISO8601DateFormatter().date(from: startString)
                 } else {
                     startTime = nil
                 }
                 
                 let provider = dict["provider"] as? String ?? "unknown"
-                let name = dict["name"] as? String ?? "Unknown Activity"
+                // Handle activity_name (from unified_activities) vs name
+                let name = dict["activity_name"] as? String ?? dict["name"] as? String ?? "Unknown Activity"
                 print("   ✓ Activity: \(name) (\(provider)) - \(distance ?? 0)m, \(elapsed ?? 0)s, HR: \(avgHR ?? 0)/\(maxHR ?? 0) bpm")
                 
                 return WorkoutSummary(
@@ -2951,56 +2954,83 @@ extension SupabaseService {
     // MARK: - Garmin Health Metrics
     
     /// Fetch Garmin health metrics from Supabase for a date range
+    /// Note: Data is stored with metric_date (date string) and includes:
+    /// - avg_heart_rate, max_heart_rate, steps, active_calories
     static func fetchGarminHealthMetrics(
         userId: UUID,
         startDate: Date,
         endDate: Date
     ) async throws -> [GarminHealthMetrics] {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        // Format dates as YYYY-MM-DD strings to match metric_date column
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        dateFormatter.timeZone = TimeZone(identifier: "UTC")
+        
+        let startDateString = dateFormatter.string(from: startDate)
+        let endDateString = dateFormatter.string(from: endDate)
         
         let response = try await Supa.client
             .from("garmin_health_metrics")
             .select("*")
             .eq("user_id", value: userId.uuidString)
-            .gte("timestamp", value: formatter.string(from: startDate))
-            .lte("timestamp", value: formatter.string(from: endDate))
-            .order("timestamp", ascending: false)
+            .gte("metric_date", value: startDateString)
+            .lte("metric_date", value: endDateString)
+            .order("metric_date", ascending: false)
             .execute()
         
         guard let dataArray = try? JSONSerialization.jsonObject(with: response.data) as? [[String: Any]] else {
             return []
         }
         
-        // Manual decoding due to raw_data JSONB field
+        // Manual decoding - data is stored with metric_date, not timestamp
         return dataArray.compactMap { dict -> GarminHealthMetrics? in
             guard let idString = dict["id"] as? String,
                   let id = UUID(uuidString: idString),
                   let userIdString = dict["user_id"] as? String,
-                  let userId = UUID(uuidString: userIdString),
-                  let garminUserId = dict["garmin_user_id"] as? String,
-                  let timestampString = dict["timestamp"] as? String else {
+                  let userId = UUID(uuidString: userIdString) else {
                 return nil
             }
             
-            let formatter = ISO8601DateFormatter()
-            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            guard let timestamp = formatter.date(from: timestampString) else {
+            // Parse metric_date (stored as YYYY-MM-DD string)
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "yyyy-MM-dd"
+            dateFormatter.timeZone = TimeZone(identifier: "UTC")
+            
+            let timestamp: Date
+            if let metricDateString = dict["metric_date"] as? String,
+               let date = dateFormatter.date(from: metricDateString) {
+                timestamp = date
+            } else if let updatedAtString = dict["updated_at"] as? String {
+                // Fallback to updated_at if metric_date is missing
+                let isoFormatter = ISO8601DateFormatter()
+                isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                timestamp = isoFormatter.date(from: updatedAtString) ?? Date()
+            } else {
                 return nil
             }
             
+            // Get garmin_user_id if available (may not be in activity-based metrics)
+            let garminUserId = dict["garmin_user_id"] as? String ?? ""
+            
+            // These fields may not be present in activity-based health metrics
             let fitnessAge = dict["fitness_age"] as? Int
             let vo2Max = dict["vo2_max"] as? Double
             
-            // Parse raw_data (could be JSON string or already a dict)
-            var rawData: [String: Any]? = nil
+            // Build raw_data from available fields
+            var rawData: [String: Any] = [:]
+            if let avgHR = dict["avg_heart_rate"] as? Int { rawData["avg_heart_rate"] = avgHR }
+            if let maxHR = dict["max_heart_rate"] as? Int { rawData["max_heart_rate"] = maxHR }
+            if let steps = dict["steps"] as? Int { rawData["steps"] = steps }
+            if let calories = dict["active_calories"] as? Int { rawData["active_calories"] = calories }
+            
+            // Also check if raw_data already exists
             if let rawDataValue = dict["raw_data"] {
                 if let dictValue = rawDataValue as? [String: Any] {
-                    rawData = dictValue
+                    rawData.merge(dictValue) { (_, new) in new }
                 } else if let stringValue = rawDataValue as? String,
                           let data = stringValue.data(using: .utf8),
                           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    rawData = json
+                    rawData.merge(json) { (_, new) in new }
                 }
             }
             
@@ -3011,7 +3041,7 @@ extension SupabaseService {
                 timestamp: timestamp,
                 fitnessAge: fitnessAge,
                 vo2Max: vo2Max,
-                rawData: rawData
+                rawData: rawData.isEmpty ? nil : rawData
             )
         }
     }
@@ -3022,7 +3052,7 @@ extension SupabaseService {
             .from("garmin_health_metrics")
             .select("*")
             .eq("user_id", value: userId.uuidString)
-            .order("timestamp", ascending: false)
+            .order("metric_date", ascending: false)
             .limit(1)
             .execute()
         
@@ -3031,33 +3061,49 @@ extension SupabaseService {
             return nil
         }
         
-        // Same parsing logic as above
+        // Same parsing logic as fetchGarminHealthMetrics
         guard let idString = dict["id"] as? String,
               let id = UUID(uuidString: idString),
               let userIdString = dict["user_id"] as? String,
-              let userId = UUID(uuidString: userIdString),
-              let garminUserId = dict["garmin_user_id"] as? String,
-              let timestampString = dict["timestamp"] as? String else {
+              let userId = UUID(uuidString: userIdString) else {
             return nil
         }
         
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        guard let timestamp = formatter.date(from: timestampString) else {
+        // Parse metric_date (stored as YYYY-MM-DD string)
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        dateFormatter.timeZone = TimeZone(identifier: "UTC")
+        
+        let timestamp: Date
+        if let metricDateString = dict["metric_date"] as? String,
+           let date = dateFormatter.date(from: metricDateString) {
+            timestamp = date
+        } else if let updatedAtString = dict["updated_at"] as? String {
+            let isoFormatter = ISO8601DateFormatter()
+            isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            timestamp = isoFormatter.date(from: updatedAtString) ?? Date()
+        } else {
             return nil
         }
         
+        let garminUserId = dict["garmin_user_id"] as? String ?? ""
         let fitnessAge = dict["fitness_age"] as? Int
         let vo2Max = dict["vo2_max"] as? Double
         
-        var rawData: [String: Any]? = nil
+        // Build raw_data from available fields
+        var rawData: [String: Any] = [:]
+        if let avgHR = dict["avg_heart_rate"] as? Int { rawData["avg_heart_rate"] = avgHR }
+        if let maxHR = dict["max_heart_rate"] as? Int { rawData["max_heart_rate"] = maxHR }
+        if let steps = dict["steps"] as? Int { rawData["steps"] = steps }
+        if let calories = dict["active_calories"] as? Int { rawData["active_calories"] = calories }
+        
         if let rawDataValue = dict["raw_data"] {
             if let dictValue = rawDataValue as? [String: Any] {
-                rawData = dictValue
+                rawData.merge(dictValue) { (_, new) in new }
             } else if let stringValue = rawDataValue as? String,
                       let data = stringValue.data(using: .utf8),
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                rawData = json
+                rawData.merge(json) { (_, new) in new }
             }
         }
         
@@ -3068,7 +3114,7 @@ extension SupabaseService {
             timestamp: timestamp,
             fitnessAge: fitnessAge,
             vo2Max: vo2Max,
-            rawData: rawData
+            rawData: rawData.isEmpty ? nil : rawData
         )
     }
     
@@ -3123,6 +3169,7 @@ struct AidStationSegmentMetrics: Codable {
     let elevationLossM: Double
     let estimatedTimeSeconds: Double
     let averageHeartRate: Double?
+    let targetHeartRate: Double? // Calculated target HR based on physiological maxHR and race fraction
 }
 
 struct RacePlanTitleUpdate: Codable {

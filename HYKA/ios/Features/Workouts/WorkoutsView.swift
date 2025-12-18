@@ -25,7 +25,7 @@ struct WearableConnectionsView: View {
         case .fullScreen:
             return "Connect your devices"
         case .section:
-            return "Connexion with your wearable"
+            return "Connection with your wearable"
         }
     }
     
@@ -51,7 +51,7 @@ struct WearableConnectionsView: View {
                     await loadExistingConnections()
                 }
             }
-            .alert("Connexion Error", isPresented: $showErrorAlert) {
+            .alert("Connection Error", isPresented: $showErrorAlert) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(errorMessage)
@@ -327,13 +327,13 @@ struct WearableConnectionsView: View {
                 print("✅ Successfully connected to \(deviceName)")
             } catch {
                 if case DeviceOAuthError.notImplemented(let message) = error {
-                    errorMessage = "\(deviceName) connexion not yet available. \(message)"
+                    errorMessage = "\(deviceName) connection not yet available. \(message)"
                 } else {
                     errorMessage = "Failed to connect to \(deviceName): \(error.localizedDescription)"
                 }
                 showErrorAlert = true
                 print("❌ Error connecting to \(deviceName): \(error)")
-                ErrorManager.shared.showError(error, title: "Connexion Failed")
+                ErrorManager.shared.showError(error, title: "Connection Failed")
             }
             
             isLoading = false

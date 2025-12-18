@@ -141,7 +141,6 @@ struct OnboardingStepProfileDetailsView: View {
                 }
             }
             .scrollDismissesKeyboard(.interactively)
-            .dismissKeyboardOnTap()
         }
         .background(HYKATheme.Light.background)
         .keyboardDoneToolbar()

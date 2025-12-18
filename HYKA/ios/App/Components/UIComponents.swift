@@ -594,16 +594,13 @@ struct HYKALoadingCard: View {
 }
 
 // MARK: - Keyboard Dismissal Modifier
+// DISABLED: Removed to prevent RTI errors with emoji operations.
+// Use scrollDismissesKeyboard(.interactively) on ScrollViews instead.
+// The "Done" button in keyboard toolbar provides manual dismissal.
 struct DismissKeyboardOnTap: ViewModifier {
     func body(content: Content) -> some View {
+        // No-op: Do nothing to prevent RTI errors
         content
-            .background(
-                Color.clear
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                    }
-            )
     }
 }
 

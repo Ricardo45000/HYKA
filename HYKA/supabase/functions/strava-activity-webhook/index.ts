@@ -15,6 +15,8 @@ serve(async (req) => {
 
   try {
     console.log("📥 Strava Activity Webhook started")
+    console.log("   Method:", req.method)
+    console.log("   URL:", req.url)
     
     // Strava webhook verification (GET request)
     if (req.method === 'GET') {
@@ -52,12 +54,14 @@ serve(async (req) => {
 
     // Handle webhook event (POST request)
     const body = await req.json()
+    console.log("📨 Webhook payload:", JSON.stringify(body, null, 2))
+    
     const objectType = body.object_type
     const objectId = body.object_id
     const aspectType = body.aspect_type
     const ownerId = body.owner_id
 
-    console.log("📨 Webhook event:", {
+    console.log("📋 Parsed webhook event:", {
       object_type: objectType,
       object_id: objectId,
       aspect_type: aspectType,
@@ -65,8 +69,8 @@ serve(async (req) => {
     })
 
     // Only process activity creation/updates
-    if (objectType !== 'activity' || aspectType !== 'create') {
-      console.log("⏭️ Skipping event (not activity creation)")
+    if (objectType !== 'activity' || (aspectType !== 'create' && aspectType !== 'update')) {
+      console.log("⏭️ Skipping event (not activity create/update):", { objectType, aspectType })
       return new Response(JSON.stringify({
         success: true,
         message: "Event skipped"
@@ -85,17 +89,35 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey)
 
     // Find user by Strava athlete ID
+    // ownerId from Strava webhook is a number, strava_athlete_id in DB is integer
+    // Convert to number to ensure proper type matching
+    const athleteId = typeof ownerId === 'number' ? ownerId : parseInt(ownerId.toString(), 10)
+    
+    console.log("🔍 Looking up connection for athlete_id:", athleteId)
+    console.log("   Type:", typeof athleteId, "Value:", athleteId)
+    
     const { data: connection, error: connError } = await supabase
       .from('strava_connections')
-      .select('user_id, access_token, refresh_token, token_expires_at')
-      .eq('strava_athlete_id', ownerId.toString())
+      .select('user_id, strava_athlete_id, access_token, refresh_token, token_expires_at')
+      .eq('strava_athlete_id', athleteId)
       .single()
 
     if (connError || !connection) {
-      console.error("❌ Strava connection not found for athlete:", ownerId)
+      console.error("❌ Strava connection not found for athlete:", athleteId)
+      console.error("   Error details:", connError)
+      
+      // Debug: Check what connections exist
+      const { data: allConnections } = await supabase
+        .from('strava_connections')
+        .select('user_id, strava_athlete_id')
+        .limit(5)
+      console.log("   Available connections:", allConnections)
+      
       return new Response(JSON.stringify({
         success: false,
-        error: "Connection not found"
+        error: "Connection not found",
+        athlete_id: athleteId,
+        error_details: connError?.message
       }), {
         status: 404,
         headers: {
@@ -104,67 +126,87 @@ serve(async (req) => {
         }
       })
     }
-
-    // Check if token needs refresh
-    let accessToken = connection.access_token
-    if (!accessToken) {
-      throw new Error("Strava access token is missing or null")
-    }
-
-    const expiresAt = connection.token_expires_at ? new Date(connection.token_expires_at) : null
-    if (expiresAt && expiresAt <= new Date()) {
-      console.log("🔄 Token expired, need to refresh (TODO)")
-      // TODO: Implement token refresh
-    }
-
-    // Fetch activity from Strava API
-    // ⚠️ CRITICAL: Must include Authorization header!
-    const stravaResponse = await fetch(`https://www.strava.com/api/v3/activities/${objectId}`, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,  // ✅ REQUIRED!
-        'Accept': 'application/json'
-      }
+    
+    console.log("✅ Found connection:", {
+      user_id: connection.user_id,
+      strava_athlete_id: connection.strava_athlete_id
     })
 
-    if (!stravaResponse.ok) {
-      const errorText = await stravaResponse.text()
-      console.error("❌ Strava API error:", stravaResponse.status, errorText)
-      throw new Error(`Strava API error: ${stravaResponse.status} - ${errorText}`)
-    }
-
-    const activity = await stravaResponse.json()
-
-    // Store activity in database
-    const { error: storeError } = await supabase
+    // Deduplication: Check if we've recently processed this activity
+    // Strava can send multiple webhooks for the same activity (create, update, retries)
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+    
+    const { data: existingActivity, error: checkError } = await supabase
       .from('strava_activities')
-      .upsert({
-        user_id: connection.user_id,
-        strava_activity_id: activity.id.toString(),
-        activity_name: activity.name,
-        activity_type: activity.type,
-        start_date: activity.start_date,
-        elapsed_time: activity.elapsed_time,
-        distance_meters: activity.distance,
-        total_elevation_gain_meters: activity.total_elevation_gain,
-        average_heart_rate: activity.average_heartrate,
-        max_heart_rate: activity.max_heartrate,
-        average_speed_mps: activity.average_speed,
-        max_speed_mps: activity.max_speed,
-        calories: activity.calories,
-        average_cadence: activity.average_cadence,
-        device_name: activity.device_name,
-        raw_summary: activity,
-        updated_at: new Date().toISOString()
-      }, {
-        onConflict: 'user_id,strava_activity_id'
-      })
-
-    if (storeError) {
-      throw new Error(`Failed to store activity: ${storeError.message}`)
+      .select('id, updated_at, strava_activity_id')
+      .eq('user_id', connection.user_id)
+      .eq('strava_activity_id', objectId.toString())
+      .single()
+    
+    if (existingActivity) {
+      const lastUpdated = new Date(existingActivity.updated_at).getTime()
+      const now = Date.now()
+      const timeSinceUpdate = now - lastUpdated
+      const fiveMinutes = 5 * 60 * 1000
+      
+      console.log(`🔍 Activity ${objectId} already exists in database`)
+      console.log(`   Last updated: ${existingActivity.updated_at}`)
+      console.log(`   Time since update: ${Math.round(timeSinceUpdate / 1000)}s`)
+      
+      // If activity was updated within the last 5 minutes, skip to prevent duplicate processing
+      if (timeSinceUpdate < fiveMinutes) {
+        console.log(`⏭️ SKIPPING: Activity ${objectId} was recently processed (${Math.round(timeSinceUpdate / 1000)}s ago)`)
+        console.log(`   This is likely a duplicate webhook from Strava`)
+        return new Response(JSON.stringify({
+          success: true,
+          message: "Activity recently processed, skipping duplicate",
+          activity_id: objectId,
+          last_updated: existingActivity.updated_at
+        }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          }
+        })
+      } else {
+        console.log(`✅ Activity exists but was last updated ${Math.round(timeSinceUpdate / 1000)}s ago`)
+        console.log(`   Processing ${aspectType} event to refresh data`)
+      }
+    } else {
+      console.log(`🆕 New activity detected: ${objectId}`)
     }
 
-    console.log("✅ Activity stored from webhook:", objectId)
+    console.log("➡️ Forwarding activity to strava-activity-store:", objectId)
+    
+    // Forward to strava-activity-store which handles:
+    // 1. Fetching activity details from Strava API
+    // 2. Storing activity in database
+    // 3. Sending Notification
+    // This ensures consistency and centralizes all logic
+    
+    const storeUrl = `${supabaseUrl}/functions/v1/strava-activity-store`
+    
+    const storeResponse = await fetch(storeUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        user_id: connection.user_id,
+        activity_id: objectId.toString()
+      })
+    })
+    
+    if (!storeResponse.ok) {
+      const errorText = await storeResponse.text()
+      console.error(`❌ Failed to forward to store: ${storeResponse.status} - ${errorText}`)
+      throw new Error(`Failed to forward to store: ${storeResponse.status} - ${errorText}`)
+    }
+    
+    const storeResult = await storeResponse.json()
+    console.log("✅ Forwarded successfully:", storeResult)
 
     return new Response(JSON.stringify({
       success: true,

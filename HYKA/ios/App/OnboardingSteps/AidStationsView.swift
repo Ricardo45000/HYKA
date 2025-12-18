@@ -224,9 +224,6 @@ struct AidStationsView: View {
                 }
             }
             .scrollDismissesKeyboard(.interactively)
-            .onTapGesture {
-                focusedField = nil
-            }
             .background(HYKATheme.backgroundColor)
             .keyboardDoneToolbar()
         }

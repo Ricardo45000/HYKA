@@ -15,6 +15,8 @@ serve(async (req) => {
 
   try {
     console.log("🔐 Strava Auth Callback started")
+    console.log("   Method:", req.method)
+    console.log("   URL:", req.url)
     
     // Handle GET requests (web redirect from Strava OAuth)
     if (req.method === 'GET') {
@@ -22,6 +24,12 @@ serve(async (req) => {
       const code = url.searchParams.get('code')
       const state = url.searchParams.get('state')
       const error = url.searchParams.get('error')
+      const apikey = url.searchParams.get('apikey')
+      
+      console.log("   GET request - Code present:", !!code)
+      console.log("   GET request - State:", state)
+      console.log("   GET request - Error:", error)
+      console.log("   GET request - API key present:", !!apikey)
 
       if (error) {
         console.error("❌ Strava OAuth error:", error)
@@ -107,12 +115,20 @@ serve(async (req) => {
     console.log("🔄 Exchanging authorization code for tokens...")
     const tokenUrl = "https://www.strava.com/oauth/token"
 
+    // ⚠️ CRITICAL: redirect_uri must match EXACTLY what was used in the authorization request
+    // Strava requires this parameter and validates it strictly
     const params = new URLSearchParams({
       client_id: clientId,
       client_secret: clientSecret,
       code: code,
-      grant_type: "authorization_code"
+      grant_type: "authorization_code",
+      redirect_uri: redirectUri // ✅ REQUIRED by Strava - must match authorization request
     })
+    
+    console.log("   Token exchange parameters:")
+    console.log("   - client_id:", clientId)
+    console.log("   - code:", code.substring(0, 20) + "...")
+    console.log("   - redirect_uri:", redirectUri)
 
     const tokenResponse = await fetch(tokenUrl, {
       method: 'POST',
@@ -177,7 +193,45 @@ serve(async (req) => {
 
     // Step 4: Store connection in database
     console.log("💾 Storing connection in database...")
+    console.log("   User ID:", userId)
+    console.log("   Athlete ID:", athleteId)
+    console.log("   Access token present:", !!accessToken)
+    console.log("   Refresh token present:", !!refreshToken)
+    console.log("   Expires at:", expiresAtDate)
 
+    // Handle potential conflicts:
+    // 1. If another user already has this strava_athlete_id, delete their connection first
+    // 2. Then upsert on user_id to update/create the connection for this user
+    if (athleteId) {
+      const { data: existingByAthlete, error: checkError } = await supabase
+        .from('strava_connections')
+        .select('user_id')
+        .eq('strava_athlete_id', athleteId.toString())
+        .maybeSingle()
+
+      if (checkError && checkError.code !== 'PGRST116') { // PGRST116 = no rows returned
+        console.error("⚠️ Error checking existing connection by athlete_id:", checkError)
+      } else if (existingByAthlete && existingByAthlete.user_id !== userId) {
+        console.log("🔄 Found existing connection for this Strava athlete with different user_id")
+        console.log("   Existing user_id:", existingByAthlete.user_id)
+        console.log("   New user_id:", userId)
+        console.log("   Deleting old connection...")
+        
+        const { error: deleteError } = await supabase
+          .from('strava_connections')
+          .delete()
+          .eq('strava_athlete_id', athleteId.toString())
+          .neq('user_id', userId) // Only delete if user_id is different
+
+        if (deleteError) {
+          console.error("⚠️ Error deleting old connection:", deleteError)
+        } else {
+          console.log("✅ Deleted old connection")
+        }
+      }
+    }
+
+    // Now upsert the connection for this user
     const { data: connection, error: connectionError } = await supabase
       .from('strava_connections')
       .upsert({
@@ -192,15 +246,27 @@ serve(async (req) => {
       }, {
         onConflict: 'user_id'
       })
-      .select('id')
+      .select('id, user_id, strava_athlete_id')
       .single()
 
-    if (connectionError || !connection) {
+    if (connectionError) {
       console.error("❌ Failed to store connection:", connectionError)
-      throw new Error(`Failed to store connection: ${connectionError?.message}`)
+      console.error("   Error code:", connectionError.code)
+      console.error("   Error message:", connectionError.message)
+      console.error("   Error details:", connectionError.details)
+      console.error("   Error hint:", connectionError.hint)
+      throw new Error(`Failed to store connection: ${connectionError.message}`)
     }
 
-    console.log("✅ Connection stored:", connection.id)
+    if (!connection) {
+      console.error("❌ Connection upsert returned no data")
+      throw new Error("Failed to store connection: No data returned from upsert")
+    }
+
+    console.log("✅ Connection stored successfully")
+    console.log("   Connection ID:", connection.id)
+    console.log("   User ID:", connection.user_id)
+    console.log("   Strava Athlete ID:", connection.strava_athlete_id)
 
     // Return tokens in format expected by iOS app
     return new Response(JSON.stringify({

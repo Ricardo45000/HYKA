@@ -67,16 +67,80 @@ serve(async (req) => {
 
     // Check if token needs refresh
     let accessToken = connection.access_token
+    let refreshToken = connection.refresh_token
     const expiresAt = connection.token_expires_at ? new Date(connection.token_expires_at) : null
     
     if (!accessToken) {
       throw new Error("Suunto access token is missing or null")
     }
     
-    if (expiresAt && expiresAt <= new Date()) {
-      console.log("🔄 Token expired, attempting to refresh...")
-      // TODO: Implement token refresh using refresh_token
-      // For now, try with existing token (may fail)
+    // Refresh token if expired or expiring soon (within 5 minutes)
+    const needsRefresh = expiresAt && (expiresAt <= new Date(Date.now() + 5 * 60 * 1000))
+    
+    if (needsRefresh && refreshToken) {
+      console.log("🔄 Refreshing Suunto token (expires at:", expiresAt?.toISOString(), ")...")
+      
+      try {
+        const clientId = Deno.env.get('SUUNTO_CLIENT_ID')
+        const clientSecret = Deno.env.get('SUUNTO_CLIENT_SECRET')
+        
+        if (!clientId || !clientSecret) {
+          console.error("❌ SUUNTO_CLIENT_ID or SUUNTO_CLIENT_SECRET not set, cannot refresh token")
+        } else {
+          const refreshParams = new URLSearchParams({
+            grant_type: 'refresh_token',
+            refresh_token: refreshToken,
+            client_id: clientId,
+            client_secret: clientSecret
+          })
+          
+          const refreshResponse = await fetch("https://cloudapi.suunto.com/v2/oauth/token", {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Accept': 'application/json',
+              'Ocp-Apim-Subscription-Key': subscriptionKey
+            },
+            body: refreshParams.toString()
+          })
+          
+          if (refreshResponse.ok) {
+            const refreshData = await refreshResponse.json()
+            accessToken = refreshData.access_token
+            refreshToken = refreshData.refresh_token || refreshToken
+            const newExpiresAt = refreshData.expires_in 
+              ? new Date(Date.now() + refreshData.expires_in * 1000).toISOString()
+              : null
+            
+            console.log("✅ Suunto token refreshed successfully")
+            console.log("   New expires at:", newExpiresAt)
+            
+            // Update connection in database
+            const { error: updateError } = await supabase
+              .from('suunto_connections')
+              .update({
+                access_token: accessToken,
+                refresh_token: refreshToken,
+                token_expires_at: newExpiresAt,
+                updated_at: new Date().toISOString()
+              })
+              .eq('user_id', userId)
+            
+            if (updateError) {
+              console.error("⚠️ Failed to update connection with new tokens:", updateError)
+            } else {
+              console.log("✅ Connection updated with new tokens")
+            }
+          } else {
+            const errorText = await refreshResponse.text()
+            console.error("❌ Suunto token refresh failed:", refreshResponse.status, errorText)
+            // Continue with existing token - may still work
+          }
+        }
+      } catch (refreshError) {
+        console.error("❌ Error refreshing Suunto token:", refreshError)
+        // Continue with existing token
+      }
     }
 
     console.log("🔑 Using access token:", accessToken.substring(0, 20) + "...")
@@ -175,8 +239,35 @@ serve(async (req) => {
                         created_at: new Date().toISOString()
                     }, { onConflict: 'activity_id' })
                     
-                if (fileError) console.error("❌ Failed to store FIT file:", fileError)
-                else console.log("💾 FIT file stored in suunto_fit_files")
+                if (fileError) {
+                    console.error("❌ Failed to store FIT file:", fileError)
+                } else {
+                    console.log("💾 FIT file stored in suunto_fit_files")
+                    
+                    // Trigger FIT processor
+                    console.log("🔄 Triggering FIT processor...")
+                    const processorUrl = `${supabaseUrl}/functions/v1/suunto-fit-processor`
+                    fetch(processorUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${supabaseKey}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            activity_id: storedActivity.id,
+                            fit_file_data: fileData
+                        })
+                    }).then(async (res) => {
+                        if (res.ok) {
+                            console.log(`✅ FIT processor triggered: ${res.status}`)
+                        } else {
+                            const text = await res.text()
+                            console.error(`❌ FIT processor failed: ${res.status} - ${text}`)
+                        }
+                    }).catch(err => {
+                        console.error("❌ Error calling FIT processor:", err)
+                    })
+                }
             }
         } else {
             console.warn(`⚠️ Failed to download FIT file: ${fitResponse.status}`)

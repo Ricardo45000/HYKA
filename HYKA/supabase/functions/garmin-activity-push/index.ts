@@ -15,7 +15,7 @@ serve(async (req) => {
       headers: {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, User-Agent',
+        'Access-Control-Allow-Headers': 'Content-Type, User-Agent, Authorization, apikey',
         'Access-Control-Max-Age': '86400',
       },
     })
@@ -24,10 +24,15 @@ serve(async (req) => {
   try {
     console.log("📦 Garmin PUSH received")
     
-    // Verify User-Agent
+    // Verify User-Agent (Garmin webhooks should have "Garmin" in User-Agent)
     const userAgent = req.headers.get('user-agent') || ''
-    if (!userAgent.includes('Garmin')) {
+    const isFromGarmin = userAgent.includes('Garmin') || userAgent.includes('garmin')
+    
+    if (!isFromGarmin) {
       console.log("⚠️ Request not from Garmin (user-agent:", userAgent, ")")
+      // Still process, but log warning
+    } else {
+      console.log("✅ Verified Garmin User-Agent:", userAgent)
     }
 
     // Parse body
@@ -72,14 +77,29 @@ serve(async (req) => {
     let dataType = 'unknown'
 
     // Find the first key that contains data
+    // IMPORTANT: In push mode, Garmin may send multiple webhooks (activities, activityFiles, activityDetails)
+    // We process each one separately, but prioritize 'activities' if it exists
+    const foundKeys: string[] = []
     for (const key of dataKeys) {
       if (body[key] && Array.isArray(body[key]) && body[key].length > 0) {
-        primaryData = body[key]
-        dataType = key
-        // Extract User ID from the first item
-        garminUserId = body[key][0].userId || body[key][0].garminUserId || body[key][0].userAccessToken
-        if (garminUserId) break
+        foundKeys.push(key)
+        // Prioritize 'activities' (summary) if it exists, as it has the full data
+        if (key === 'activities' && !primaryData.length) {
+          primaryData = body[key]
+          dataType = key
+          garminUserId = body[key][0].userId || body[key][0].garminUserId || body[key][0].userAccessToken
+        } else if (!primaryData.length) {
+          // Use first available if activities not found
+          primaryData = body[key]
+          dataType = key
+          garminUserId = body[key][0].userId || body[key][0].garminUserId || body[key][0].userAccessToken
+        }
       }
+    }
+    
+    console.log(`   📋 Found data keys in webhook: ${foundKeys.join(', ')}`)
+    if (foundKeys.includes('activities')) {
+      console.log(`   ✅ SUMMARY payload (activities) found - this should have full activity data`)
     }
 
     // Fallback: Check top-level userId
@@ -130,73 +150,181 @@ serve(async (req) => {
       
       // Filter keywords (case-insensitive)
       const allowedActivityTypeKeywords = ['running', 'hiking', 'walking']
+      
+      console.log(`   📦 Processing ${dataType} payload with ${primaryData.length} item(s)`)
+      console.log(`   📦 First item keys:`, primaryData[0] ? Object.keys(primaryData[0]).slice(0, 20) : 'no items')
 
       for (const item of primaryData) {
         try {
-          // Normalize ID and Name
-          const activityId = item.summaryId || item.activityId || item.id
+          // Normalize ID - check multiple possible fields
+          const activityId = item.summaryId || item.activityId || item.id || item.summary?.summaryId || item.summary?.activityId
           
-          // Filter by activity type (only for 'activities' summaries where type is guaranteed)
-          // For files/details, type might not be present, so we proceed (or you could fetch summary to check)
+          // Extract activity type from multiple possible locations
+          let activityType = item.activityType || item.type || item.sportType || item.activityTypeKey
+          // If it's an object, extract the key
+          if (activityType && typeof activityType === 'object') {
+            activityType = activityType.typeKey || activityType.key || activityType.type
+          }
+          
+          // Filter by activity type (only for 'activities' summaries where type should be present)
+          // For files/details, type might not be present, so we proceed
+          // IMPORTANT: Always forward 'activities' payloads to store function - let store function decide if it has meaningful data
           if (dataType === 'activities') {
-            const activityType = (item.activityType || '').toLowerCase()
-            const isAllowed = allowedActivityTypeKeywords.some(k => activityType.includes(k))
+            const activityTypeLower = (activityType || '').toLowerCase()
+            const isAllowed = activityTypeLower ? allowedActivityTypeKeywords.some(k => activityTypeLower.includes(k)) : false
             
-            if (!isAllowed) {
-              console.log(`⏭️ Skipping activity type: ${item.activityType} (not Running/Hiking/Walking)`)
+            // Log what we're checking
+            console.log(`   📋 Checking activity type: "${activityType}" (lowercase: "${activityTypeLower}")`)
+            console.log(`   📋 Allowed keywords: ${allowedActivityTypeKeywords.join(', ')}`)
+            console.log(`   📋 Is allowed: ${isAllowed}`)
+            console.log(`   📋 Activity data preview:`, {
+              activityId: activityId,
+              activityName: item.activityName || item.name,
+              distance: item.distanceInMeters || item.distance,
+              duration: item.durationInSeconds || item.elapsedDuration,
+              activityType: activityType
+            })
+            
+            // Only skip if we have a specific activity type that's NOT allowed
+            // If activityType is undefined/null/empty, forward it anyway - store function will handle it
+            if (!isAllowed && activityType && activityType !== 'unknown') {
+              console.log(`⏭️ Skipping activity type: ${activityType} (not Running/Hiking/Walking)`)
               continue
+            } else {
+              if (!activityType) {
+                console.log(`⚠️ Activity type is undefined/missing, but forwarding anyway (store function will decide)`)
+              } else {
+                console.log(`✅ Activity type "${activityType}" is allowed - forwarding to store`)
+              }
+              // Forward to store function - it will check for meaningful data
             }
           }
 
           // For files/details, we might not have activityType, accept everything
-          const activityType = item.activityType || 'unknown'
+          const finalActivityType = activityType || 'unknown'
           
           if (!activityId) {
             console.log("⚠️ Item missing ID, skipping")
+            console.log("   Item keys:", Object.keys(item))
             continue
           }
 
-          console.log(`📦 Processing ${dataType}: ${activityId} (${activityType})`)
+          console.log(`📦 Processing ${dataType}: ${activityId} (${finalActivityType})`)
 
-          // Prepare payload for store function
-          // We map everything to a common structure expected by store function
-          const payloadToStore = {
-            garminUserId: garminUserId,
-            userId: connection.user_id, // Pass HYKA user ID directly
-            
-            // Pass raw data based on what we received
-            summary: dataType === 'activities' ? item : null,
-            file: dataType === 'activityFiles' ? item : null,
-            details: dataType === 'activityDetails' ? item : null,
-            
-            // If we received a file/details push, we might need to fetch the full summary if we don't have it
-            // But for now, just passing what we have is a good start
-            
-            callbackUrl: item.callbackUrl // Important for files/details
-          }
-
-          // Call garmin-activity-store
-          // Note: You might need to update garmin-activity-store to handle 'file' and 'details' payloads directly
-          // For now, we'll assume it can handle it or we just log the receipt
+          // Extract callbackUrl if available
+          const callbackUrl = item.callbackUrl || item.callbackURL
           
-          // If it's just a file/detail push without summary, we might want to trigger a fetch
-          // But let's try to forward it first
-          
-          const storeResponse = await fetch(`${supabaseUrl}/functions/v1/garmin-activity-store`, {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${supabaseKey}`,
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify(payloadToStore)
-          })
-
-          if (storeResponse.ok) {
-            processedCount++
-            console.log(`✅ ${dataType} forwarded for ${activityId}`)
+          // If we have a callbackUrl, we need to use the PULL function to fetch FIT file
+          // The PULL function will fetch summary, details, and FIT file from the callbackUrl
+          if (callbackUrl && (dataType === 'activityFiles' || dataType === 'activityDetails')) {
+            console.log(`   🔄 Found callbackUrl for ${dataType} - calling PULL function...`)
+            console.log(`   Callback URL: ${callbackUrl.substring(0, 100)}...`)
+            
+            // Call the PULL function which will:
+            // 1. Fetch summary from callbackUrl
+            // 2. Fetch details from callbackUrl/details
+            // 3. Fetch FIT file from callbackUrl/file
+            // 4. Forward everything to STORE function
+            const pullUrl = `${supabaseUrl}/functions/v1/garmin-activity-pull`
+            const pullResponse = await fetch(pullUrl, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${supabaseKey}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                callbackUrl: callbackUrl,
+                garminUserId: garminUserId,
+                summaryId: activityId
+              })
+            })
+            
+            if (pullResponse.ok) {
+              const pullResult = await pullResponse.json()
+              console.log(`   ✅ PULL function completed successfully`)
+              console.log(`   Summary ID: ${pullResult.summaryId}, Samples: ${pullResult.samplesCount || 0}`)
+              processedCount++
+            } else {
+              const pullErrorText = await pullResponse.text()
+              console.error(`   ❌ PULL function failed: ${pullResponse.status} - ${pullErrorText}`)
+              // Fallback: Still forward to store function with what we have
+              console.log(`   ⚠️ Falling back to direct store (without FIT file)`)
+              
+              const payloadToStore = {
+                garminUserId: garminUserId,
+                userId: connection.user_id,
+                summary: dataType === 'activities' ? item : null,
+                file: dataType === 'activityFiles' ? item : null,
+                details: dataType === 'activityDetails' ? item : null,
+                callbackUrl: callbackUrl
+              }
+              
+              const storeResponse = await fetch(`${supabaseUrl}/functions/v1/garmin-activity-store`, {
+                method: "POST",
+                headers: {
+                  "Authorization": `Bearer ${supabaseKey}`,
+                  "Content-Type": "application/json"
+                },
+                body: JSON.stringify(payloadToStore)
+              })
+              
+              if (storeResponse.ok) {
+                processedCount++
+                console.log(`✅ ${dataType} forwarded to store (fallback)`)
+              } else {
+                const err = await storeResponse.text()
+                console.error(`❌ Store failed (fallback): ${storeResponse.status} - ${err}`)
+              }
+            }
           } else {
-            const err = await storeResponse.text()
-            console.error(`❌ Store failed: ${storeResponse.status} - ${err}`)
+            // No callbackUrl or it's a summary payload - forward directly to store
+            // Prepare payload for store function
+            const payloadToStore = {
+              garminUserId: garminUserId,
+              userId: connection.user_id, // Pass HYKA user ID directly
+              
+              // Pass raw data based on what we received
+              summary: dataType === 'activities' ? item : null,
+              file: dataType === 'activityFiles' ? item : null,
+              details: dataType === 'activityDetails' ? item : null,
+              
+              callbackUrl: callbackUrl // May be null for summary payloads
+            }
+            
+            // Log what we're sending to store function
+            if (dataType === 'activities') {
+              console.log(`   📤 SUMMARY payload - forwarding to store with data:`, {
+                activityId: activityId,
+                activityName: item.activityName || item.name,
+                distance: item.distanceInMeters || item.distance || 'missing',
+                duration: item.durationInSeconds || item.elapsedDuration || 'missing',
+                activityType: activityType || 'missing',
+                hasDistance: !!(item.distanceInMeters || item.distance),
+                hasDuration: !!(item.durationInSeconds || item.elapsedDuration)
+              })
+            }
+
+            // Call garmin-activity-store
+            const storeResponse = await fetch(`${supabaseUrl}/functions/v1/garmin-activity-store`, {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${supabaseKey}`,
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify(payloadToStore)
+            })
+
+            if (storeResponse.ok) {
+              processedCount++
+              const storeResult = await storeResponse.json().catch(() => ({}))
+              console.log(`✅ ${dataType} forwarded for ${activityId}`)
+              if (dataType === 'activities') {
+                console.log(`   Store result:`, storeResult)
+              }
+            } else {
+              const err = await storeResponse.text()
+              console.error(`❌ Store failed: ${storeResponse.status} - ${err}`)
+            }
           }
 
         } catch (err) {

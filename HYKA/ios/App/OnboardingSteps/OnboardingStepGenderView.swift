@@ -128,6 +128,7 @@ struct OnboardingStepGenderView: View {
                     .padding(.bottom, HYKATheme.spacingXXL)
                 }
             }
+            .scrollDismissesKeyboard(.interactively)
         }
         .background(HYKATheme.Light.background)
         .alert("Sign Out", isPresented: $showSignOutAlert) {

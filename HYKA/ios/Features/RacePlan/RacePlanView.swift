@@ -82,7 +82,7 @@ struct FuelingStation: Codable {
     let hydrationNote: String
 }
 
-struct AthleteAnalytics {
+struct AthleteAnalytics: Equatable {
     let averageHeartRate: Double?
     let maxHeartRate: Double?
     let basePaceMinutesPerKilometer: Double?
@@ -145,6 +145,7 @@ struct RacePlanView: View {
     @State private var pdfURL: URL?
     @State private var showShareSheet = false
     @State private var isSyncingDevice = false
+    @State private var isSavingStations = false
     
     // Fuel Type Model
     struct FuelType: Identifiable {
@@ -165,217 +166,11 @@ struct RacePlanView: View {
                 VStack(spacing: 0) {
                     raceSelectorSection
                     
-                    if let currentRace = selectedRace {
-                        // Header Section
-                        VStack(alignment: .leading, spacing: HYKATheme.spacingS) {
-                    HStack {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Your Race Strategy")
-                                        .font(.system(size: 28, weight: .bold))
-                                        .foregroundColor(HYKATheme.Light.foreground)
-                                    
-                                    Text("Personalized plan for \(currentRace.title)")
-                                        .font(.system(size: 15, weight: .regular))
-                                        .foregroundColor(HYKATheme.Light.mutedForeground)
-                                }
-                                
-                        Spacer()
-                                
-                                // Edit pencil icon
-                                Button {
-                                    editingRaceName = selectedRace?.title ?? ""
-                                    editingRaceDate = raceMetadata?.raceDate ?? Date()
-                                    showEditRaceModal = true
-                                } label: {
-                                    ZStack {
-                                        Circle()
-                                            .fill(Color.hykaPurple)
-                                            .frame(width: 32, height: 32)
-                                        
-                                        Image(systemName: "pencil")
-                                            .font(.system(size: 14, weight: .bold))
-                                            .foregroundColor(.white)
-                                    }
-                                }
-                            }
-                            .padding(.horizontal, HYKATheme.spacingXXL)
-                            .padding(.top, HYKATheme.spacingL)
-                            .padding(.bottom, HYKATheme.spacingM)
-                        }
-                        
-                        // Race Details Card
-                        VStack(spacing: HYKATheme.spacingM) {
-                    HStack {
-                                Text(currentRace.title)
-                                    .font(.system(size: 28, weight: .bold))
-                                    .foregroundColor(HYKATheme.Light.foreground)
-                        Spacer()
-                            }
-                            
-                            // 2x2 Grid Layout with icons outside - aligned vertically
-                            HStack(alignment: .top, spacing: HYKATheme.spacingL) {
-                                // Left Column
-                                VStack(alignment: .leading, spacing: HYKATheme.spacingL) {
-                                    // Race Date
-                                    HStack(alignment: .top, spacing: HYKATheme.spacingS) {
-                                        Image(systemName: "calendar")
-                                            .font(.system(size: 14))
-                                            .foregroundColor(Color.hykaPurple)
-                                            .frame(width: 16, height: 16)
-                                            .fixedSize()
-                                        
-                                        VStack(alignment: .leading, spacing: HYKATheme.spacingXS) {
-                                            Text("Race Date")
-                                                .font(.system(size: 12, weight: .regular))
-                                                .foregroundColor(HYKATheme.Light.mutedForeground)
-                                            Text(formattedMetadataDate())
-                                                .font(.system(size: 15, weight: .semibold))
-                                                .foregroundColor(HYKATheme.Light.foreground)
-                                        }
-                                    }
-                                    
-                                    // Elevation Gain
-                                    HStack(alignment: .top, spacing: HYKATheme.spacingS) {
-                                        Image(systemName: "mountain.2.fill")
-                                            .font(.system(size: 14))
-                                            .foregroundColor(Color.hykaPurple)
-                                            .frame(width: 16, height: 16)
-                                            .fixedSize()
-                                        
-                                        VStack(alignment: .leading, spacing: HYKATheme.spacingXS) {
-                                            Text("Elevation Gain")
-                                                .font(.system(size: 12, weight: .regular))
-                                                .foregroundColor(HYKATheme.Light.mutedForeground)
-                                            Text(formattedMetadataElevation())
-                                                .font(.system(size: 15, weight: .semibold))
-                                                .foregroundColor(HYKATheme.Light.foreground)
-                                        }
-                                    }
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                
-                                // Right Column
-                                VStack(alignment: .leading, spacing: HYKATheme.spacingL) {
-                                    // Distance
-                                    HStack(alignment: .top, spacing: HYKATheme.spacingS) {
-                                        Image(systemName: "mappin.circle.fill")
-                                            .font(.system(size: 14))
-                                            .foregroundColor(Color.hykaPurple)
-                                            .frame(width: 16, height: 16)
-                                            .fixedSize()
-                                        
-                                        VStack(alignment: .leading, spacing: HYKATheme.spacingXS) {
-                                            Text("Distance")
-                                                .font(.system(size: 12, weight: .regular))
-                                                .foregroundColor(HYKATheme.Light.mutedForeground)
-                                            Text(formattedRaceDistance())
-                                                .font(.system(size: 15, weight: .semibold))
-                                                .foregroundColor(HYKATheme.Light.foreground)
-                                        }
-                                    }
-                                    
-                                    // Est. Time
-                                    HStack(alignment: .top, spacing: HYKATheme.spacingS) {
-                                        Image(systemName: "clock.fill")
-                                            .font(.system(size: 14))
-                                            .foregroundColor(Color.hykaPurple)
-                                            .frame(width: 16, height: 16)
-                                            .fixedSize()
-                                        
-                                        VStack(alignment: .leading, spacing: HYKATheme.spacingXS) {
-                                            Text("Est. Time")
-                                                .font(.system(size: 12, weight: .regular))
-                                                .foregroundColor(HYKATheme.Light.mutedForeground)
-                                            Text(formattedEstimatedDuration())
-                                                .font(.system(size: 15, weight: .semibold))
-                                                .foregroundColor(HYKATheme.Light.foreground)
-                                        }
-                                    }
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            .padding(.top, HYKATheme.spacingS)
-                            
-                            if let notes = raceMetadata?.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !notes.isEmpty {
-                                VStack(alignment: .leading, spacing: HYKATheme.spacingXS) {
-                                    Text("Race Notes")
-                                        .font(.system(size: 12, weight: .regular))
-                                        .foregroundColor(HYKATheme.Light.mutedForeground)
-                                    Text(notes)
-                                        .font(.system(size: 14, weight: .regular))
-                                        .foregroundColor(HYKATheme.Light.foreground)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.top, HYKATheme.spacingS)
-                            }
-                            
-                            // Download and Sync buttons
-                            VStack(spacing: HYKATheme.spacingS) {
-                                Text("Download your strategy or connect to \(connectedProvider?.capitalized ?? "your device") for real-time guidance on race day.")
-                                    .font(.system(size: 13, weight: .regular))
-                                    .foregroundColor(HYKATheme.Light.mutedForeground)
-                                    .multilineTextAlignment(.center)
-                                
-                                HStack(spacing: HYKATheme.spacingM) {
-                                    Button {
-                                        Task {
-                                            await generateRaceStrategyPDF()
-                                        }
-                                    } label: {
-                                        HStack {
-                                            Image(systemName: "arrow.down.circle.fill")
-                                                .font(.system(size: 14, weight: .semibold))
-                                            Text("Download")
-                                                .font(.system(size: 12, weight: .semibold))
-                                                .lineLimit(1)
-                                        }
-                                        .foregroundColor(.white)
-                                        .frame(maxWidth: .infinity)
-                                        .frame(height: 40)
-                                        .background(Color.hykaPurple)
-                                        .cornerRadius(HYKATheme.cornerRadiusM)
-                                    }
-                                }
-                            }
-                            .padding(.top, HYKATheme.spacingM)
-                        }
-                        .padding(HYKATheme.spacingXXL)
-                        .background(Color.hykaPurple.opacity(0.05))
-                        .cornerRadius(HYKATheme.cornerRadiusL)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: HYKATheme.cornerRadiusL)
-                                .stroke(Color.hykaPurple.opacity(0.3), lineWidth: 2)
-                        )
-                        .shadow(color: Color.black.opacity(0.05), radius: 10, x: 0, y: 2)
-                        .padding(.horizontal, HYKATheme.spacingXXL)
-                        .padding(.bottom, HYKATheme.spacingL)
-                        
-                        // Segmented Control
-                        Picker("View Type", selection: $selectedTab) {
-                            Text("Race Plan")
-                                .font(.system(size: 15, weight: .medium))
-                                .tag(0)
-                            
-                            Text("Conditions")
-                                .font(.system(size: 15, weight: .medium))
-                                .tag(1)
-                        }
-                        .pickerStyle(SegmentedPickerStyle())
-                        .onAppear {
-                            UISegmentedControl.appearance().setTitleTextAttributes([.foregroundColor: UIColor.black], for: .normal)
-                            UISegmentedControl.appearance().setTitleTextAttributes([.foregroundColor: UIColor.black], for: .selected)
-                            UISegmentedControl.appearance().selectedSegmentTintColor = .white
-                            UISegmentedControl.appearance().backgroundColor = .lightGray
-                        }
-                        .padding(.horizontal, HYKATheme.spacingXXL)
-                        .padding(.bottom, HYKATheme.spacingL)
-                        
-                        // Content based on selected tab
-                        if selectedTab == 0 {
-                            calendarView
-                        } else {
-                            conditionsView
-                        }
+                    if selectedRace != nil {
+                        raceHeaderSection
+                        raceDetailsCard
+                        segmentedControlSection
+                        tabContentView
                     } else {
                         emptyRaceDetails
                             .padding(.horizontal, HYKATheme.spacingXXL)
@@ -388,6 +183,17 @@ struct RacePlanView: View {
         .task {
             await loadRacePlans()
             await fetchConnectedProvider()
+        }
+        .onChange(of: athleteAnalytics) { _ in
+            // When analytics change (new workout data), recalculate metrics and strategy
+            Task { @MainActor in
+                if !trackPoints.isEmpty && !aidStations.isEmpty {
+                    let recalculatedMetrics = buildSegmentMetrics(for: aidStations, using: trackPoints)
+                    aidStationMetrics = Dictionary(uniqueKeysWithValues: recalculatedMetrics.enumerated().map { ($0.offset, $0.element) })
+                    print("✅ Recalculated aid station metrics due to analytics change: \(aidStationMetrics.count) segments")
+                    recalculateStrategy()
+                }
+            }
         }
         .sheet(isPresented: $showRaceCreation) {
             RaceCreationFlowView { newRaceId, metadata in
@@ -411,11 +217,30 @@ struct RacePlanView: View {
                 aidStations: $aidStations,
                 onSave: {
                     Task {
+                        await MainActor.run {
+                            isSavingStations = true
+                        }
                         await saveAidStations()
+                        await MainActor.run {
+                            isSavingStations = false
+                            showEditAidStations = false
+                        }
                     }
-                    showEditAidStations = false
                 }
             )
+        }
+        .overlay(alignment: .center) {
+            if isSavingStations {
+                ZStack {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+                    
+                    VStack(spacing: HYKATheme.spacingL) {
+                        HYKALoadingCard(message: "Fetching data...")
+                    }
+                    .padding(HYKATheme.spacingXXL)
+                }
+            }
         }
         .sheet(isPresented: $showEditFuelTypeReference) {
             EditFuelTypeReferenceModal(
@@ -431,7 +256,9 @@ struct RacePlanView: View {
                 onSave: {
                     showLocationPicker = false
                     Task {
-                        await fetchWeather(location: weatherLocation)
+                        // Always use GPX coordinates if available, otherwise geocode the location
+                        let coordinatesToUse = await MainActor.run { weatherCoordinates }
+                        await fetchWeather(location: weatherLocation, coordinates: coordinatesToUse)
                         // Save location to race plan if we have one
                         if let racePlanId = racePlanId {
                             await saveLocationToRacePlan(racePlanId: racePlanId, location: weatherLocation)
@@ -568,6 +395,231 @@ struct RacePlanView: View {
             RoundedRectangle(cornerRadius: HYKATheme.cornerRadiusM)
                 .stroke(HYKATheme.Light.border, lineWidth: 1)
         )
+    }
+    
+    private var raceHeaderSection: some View {
+        Group {
+            if let currentRace = selectedRace {
+                VStack(alignment: .leading, spacing: HYKATheme.spacingS) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Your Race Strategy")
+                                .font(.system(size: 28, weight: .bold))
+                                .foregroundColor(HYKATheme.Light.foreground)
+                            
+                            Text("Personalized plan for \(currentRace.title)")
+                                .font(.system(size: 15, weight: .regular))
+                                .foregroundColor(HYKATheme.Light.mutedForeground)
+                        }
+                        
+                        Spacer()
+                        
+                        // Edit pencil icon
+                        Button {
+                            editingRaceName = selectedRace?.title ?? ""
+                            editingRaceDate = raceMetadata?.raceDate ?? Date()
+                            showEditRaceModal = true
+                        } label: {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.hykaPurple)
+                                    .frame(width: 32, height: 32)
+                                
+                                Image(systemName: "pencil")
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundColor(.white)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, HYKATheme.spacingXXL)
+                    .padding(.top, HYKATheme.spacingL)
+                    .padding(.bottom, HYKATheme.spacingM)
+                }
+            }
+        }
+    }
+    
+    private var raceDetailsCard: some View {
+        Group {
+            if let currentRace = selectedRace {
+                VStack(spacing: HYKATheme.spacingM) {
+                    HStack {
+                        Text(currentRace.title)
+                            .font(.system(size: 28, weight: .bold))
+                            .foregroundColor(HYKATheme.Light.foreground)
+                        Spacer()
+                    }
+                    
+                    // 2x2 Grid Layout with icons outside - aligned vertically
+                    HStack(alignment: .top, spacing: HYKATheme.spacingL) {
+                        // Left Column
+                        VStack(alignment: .leading, spacing: HYKATheme.spacingL) {
+                            // Race Date
+                            HStack(alignment: .top, spacing: HYKATheme.spacingS) {
+                                Image(systemName: "calendar")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(Color.hykaPurple)
+                                    .frame(width: 16, height: 16)
+                                    .fixedSize()
+                                
+                                VStack(alignment: .leading, spacing: HYKATheme.spacingXS) {
+                                    Text("Race Date")
+                                        .font(.system(size: 12, weight: .regular))
+                                        .foregroundColor(HYKATheme.Light.mutedForeground)
+                                    Text(formattedMetadataDate())
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundColor(HYKATheme.Light.foreground)
+                                }
+                            }
+                            
+                            // Elevation Gain
+                            HStack(alignment: .top, spacing: HYKATheme.spacingS) {
+                                Image(systemName: "mountain.2.fill")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(Color.hykaPurple)
+                                    .frame(width: 16, height: 16)
+                                    .fixedSize()
+                                
+                                VStack(alignment: .leading, spacing: HYKATheme.spacingXS) {
+                                    Text("Elevation Gain")
+                                        .font(.system(size: 12, weight: .regular))
+                                        .foregroundColor(HYKATheme.Light.mutedForeground)
+                                    Text(formattedMetadataElevation())
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundColor(HYKATheme.Light.foreground)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        
+                        // Right Column
+                        VStack(alignment: .leading, spacing: HYKATheme.spacingL) {
+                            // Distance
+                            HStack(alignment: .top, spacing: HYKATheme.spacingS) {
+                                Image(systemName: "mappin.circle.fill")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(Color.hykaPurple)
+                                    .frame(width: 16, height: 16)
+                                    .fixedSize()
+                                
+                                VStack(alignment: .leading, spacing: HYKATheme.spacingXS) {
+                                    Text("Distance")
+                                        .font(.system(size: 12, weight: .regular))
+                                        .foregroundColor(HYKATheme.Light.mutedForeground)
+                                    Text(formattedRaceDistance())
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundColor(HYKATheme.Light.foreground)
+                                }
+                            }
+                            
+                            // Est. Time
+                            HStack(alignment: .top, spacing: HYKATheme.spacingS) {
+                                Image(systemName: "clock.fill")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(Color.hykaPurple)
+                                    .frame(width: 16, height: 16)
+                                    .fixedSize()
+                                
+                                VStack(alignment: .leading, spacing: HYKATheme.spacingXS) {
+                                    Text("Est. Time")
+                                        .font(.system(size: 12, weight: .regular))
+                                        .foregroundColor(HYKATheme.Light.mutedForeground)
+                                    Text(formattedEstimatedDuration())
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundColor(HYKATheme.Light.foreground)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.top, HYKATheme.spacingS)
+                    
+                    if let notes = raceMetadata?.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !notes.isEmpty {
+                        VStack(alignment: .leading, spacing: HYKATheme.spacingXS) {
+                            Text("Race Notes")
+                                .font(.system(size: 12, weight: .regular))
+                                .foregroundColor(HYKATheme.Light.mutedForeground)
+                            Text(notes)
+                                .font(.system(size: 14, weight: .regular))
+                                .foregroundColor(HYKATheme.Light.foreground)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, HYKATheme.spacingS)
+                    }
+                    
+                    // Download and Sync buttons
+                    VStack(spacing: HYKATheme.spacingS) {
+                        Text("Download your strategy or connect to \(connectedProvider?.capitalized ?? "your device") for real-time guidance on race day.")
+                            .font(.system(size: 13, weight: .regular))
+                            .foregroundColor(HYKATheme.Light.mutedForeground)
+                            .multilineTextAlignment(.center)
+                        
+                        HStack(spacing: HYKATheme.spacingM) {
+                            Button {
+                                Task {
+                                    await generateRaceStrategyPDF()
+                                }
+                            } label: {
+                                HStack {
+                                    Image(systemName: "arrow.down.circle.fill")
+                                        .font(.system(size: 14, weight: .semibold))
+                                    Text("Download")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .lineLimit(1)
+                                }
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 40)
+                                .background(Color.hykaPurple)
+                                .cornerRadius(HYKATheme.cornerRadiusM)
+                            }
+                        }
+                    }
+                    .padding(.top, HYKATheme.spacingM)
+                }
+                .padding(HYKATheme.spacingXXL)
+                .background(Color.hykaPurple.opacity(0.05))
+                .cornerRadius(HYKATheme.cornerRadiusL)
+                .overlay(
+                    RoundedRectangle(cornerRadius: HYKATheme.cornerRadiusL)
+                        .stroke(Color.hykaPurple.opacity(0.3), lineWidth: 2)
+                )
+                .shadow(color: Color.black.opacity(0.05), radius: 10, x: 0, y: 2)
+                .padding(.horizontal, HYKATheme.spacingXXL)
+                .padding(.bottom, HYKATheme.spacingL)
+            }
+        }
+    }
+    
+    private var segmentedControlSection: some View {
+        Picker("View Type", selection: $selectedTab) {
+            Text("Race Plan")
+                .font(.system(size: 15, weight: .medium))
+                .tag(0)
+            
+            Text("Conditions")
+                .font(.system(size: 15, weight: .medium))
+                .tag(1)
+        }
+        .pickerStyle(SegmentedPickerStyle())
+        .onAppear {
+            UISegmentedControl.appearance().setTitleTextAttributes([.foregroundColor: UIColor.black], for: .normal)
+            UISegmentedControl.appearance().setTitleTextAttributes([.foregroundColor: UIColor.black], for: .selected)
+            UISegmentedControl.appearance().selectedSegmentTintColor = .white
+            UISegmentedControl.appearance().backgroundColor = .lightGray
+        }
+        .padding(.horizontal, HYKATheme.spacingXXL)
+        .padding(.bottom, HYKATheme.spacingL)
+    }
+    
+    private var tabContentView: some View {
+        Group {
+            if selectedTab == 0 {
+                calendarView
+            } else {
+                conditionsView
+            }
+        }
     }
     
     private var emptyRaceDetails: some View {
@@ -710,18 +762,20 @@ struct RacePlanView: View {
                         .foregroundColor(HYKATheme.Light.mutedForeground)
                 }
                 
-                // Pacing and Fueling Cards
-                ForEach(Array(pacingSegments.enumerated()), id: \.element.id) { index, segment in
-                    VStack(spacing: HYKATheme.spacingL) {
-                        // Pacing Card
-                        pacingCard(segment: segment)
-                        
-                        // Fueling Card (if available for this segment)
-                        if index < fuelingStations.count {
-                            fuelingCard(station: fuelingStations[index])
+                // Pacing and Fueling Cards - Use VStack with no spacing to control manually
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(pacingSegments.enumerated()), id: \.element.id) { index, segment in
+                        VStack(spacing: HYKATheme.spacingL) {
+                            // Pacing Card
+                            pacingCard(segment: segment)
+                                .padding(.top, index == 0 ? 0 : HYKATheme.spacingL)
+                            
+                            // Fueling Card (if available for this segment)
+                            if index < fuelingStations.count {
+                                fuelingCard(station: fuelingStations[index])
+                            }
                         }
                     }
-                    .padding(.top, index == 0 ? 0 : HYKATheme.spacingL)
                 }
                 
                 // Pacing Tips and Nutrition Tips Cards
@@ -788,7 +842,7 @@ struct RacePlanView: View {
                         }
                     }
                     
-                    Text("\(String(format: "%.0f", segment.fromDistance))K - \(String(format: "%.0f", segment.toDistance))K (\(String(format: "%.1f", segment.segmentDistance))K) • \(segment.duration)")
+                    Text("\(String(format: "%.2f", segment.fromDistance))K - \(String(format: "%.2f", segment.toDistance))K (\(String(format: "%.2f", segment.segmentDistance))K) • \(segment.duration)")
                         .font(.system(size: 13, weight: .regular))
                         .foregroundColor(HYKATheme.Light.mutedForeground)
                 }
@@ -830,14 +884,14 @@ struct RacePlanView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 4) {
                         Image(systemName: "clock")
-                            .font(.system(size: 12))
+                            .font(.system(size: 10))
                             .foregroundColor(HYKATheme.Light.mutedForeground)
                         Text("Est. Pace")
-                            .font(.system(size: 11, weight: .regular))
+                            .font(.system(size: 9, weight: .regular))
                             .foregroundColor(HYKATheme.Light.mutedForeground)
                     }
                     Text(segment.estimatedPace)
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(HYKATheme.Light.foreground)
                 }
                 
@@ -847,14 +901,14 @@ struct RacePlanView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.up.right")
-                            .font(.system(size: 12))
+                            .font(.system(size: 10))
                             .foregroundColor(.green)
                         Text("Gain")
-                            .font(.system(size: 11, weight: .regular))
+                            .font(.system(size: 9, weight: .regular))
                             .foregroundColor(HYKATheme.Light.mutedForeground)
                     }
                     Text("+\(segment.elevationGain)m")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(HYKATheme.Light.foreground)
                 }
                 
@@ -864,14 +918,14 @@ struct RacePlanView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.down.right")
-                            .font(.system(size: 12))
+                            .font(.system(size: 10))
                             .foregroundColor(.red)
                         Text("Loss")
-                            .font(.system(size: 11, weight: .regular))
+                            .font(.system(size: 9, weight: .regular))
                             .foregroundColor(HYKATheme.Light.mutedForeground)
                     }
                     Text("-\(segment.elevationLoss)m")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(HYKATheme.Light.foreground)
                 }
             }
@@ -895,16 +949,9 @@ struct RacePlanView: View {
                         .fill(Color.hykaPurple.opacity(0.2))
                         .frame(width: 40, height: 40)
                     
-                    ZStack {
-                        Image(systemName: "mappin.circle.fill")
-                            .font(.system(size: 18))
-                            .foregroundColor(Color.hykaPurple)
-                        
-                        Text("ψq")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(.white)
-                            .offset(y: 2)
-                    }
+                    Image(systemName: "fork.knife")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(Color.hykaPurple)
                 }
                 
                 VStack(alignment: .leading, spacing: 4) {
@@ -2004,13 +2051,38 @@ struct RacePlanView: View {
         // Check if offline - load from cache
         let isOffline = !NetworkMonitor.shared.isConnected
         
-        if !forceRefresh,
+        // ALWAYS fetch fresh workouts from database - never use cache for workout data
+        // This ensures race plan calculations use the latest activity data
+        if !forceRefresh && !isOffline,
            let cachedDetail = await RacePlanDetailCache.shared.detail(for: plan.id),
            cachedDetail.lastUpdated == plan.updatedAt {
+            // Load cached race structure (aid stations, track points, etc.) but fetch fresh workouts
             await MainActor.run {
-                applyCachedDetail(cachedDetail, skipRecalculation: false)
+                applyCachedDetail(cachedDetail, skipRecalculation: true) // Skip recalculation, we'll do it with fresh data
             }
             await fetchWeather(location: cachedDetail.weatherLocation, coordinates: cachedDetail.weatherCoordinates)
+            
+            // Fetch fresh workouts from database and recalculate
+            let workouts = try await SupabaseService.fetchWorkouts(userId: userId)
+            print("📊 RacePlanView: Fetched \(workouts.count) fresh workouts (bypassing cache)")
+            if !workouts.isEmpty {
+                print("   First workout: \(workouts.first?.distanceM ?? 0)m, HR: \(workouts.first?.avgHR ?? 0)/\(workouts.first?.maxHR ?? 0) bpm")
+            }
+            
+            let now = Date()
+            let historyStart = Calendar.current.date(byAdding: .day, value: -90, to: now) ?? now
+            let healthHistory = try await SupabaseService.fetchHealthMetrics(userId: userId, startDate: historyStart, endDate: now)
+            let latestHealthMetric = healthHistory.first
+            let analytics = await buildAthleteAnalytics(userId: userId, workouts: workouts, healthMetric: latestHealthMetric)
+            
+            await MainActor.run {
+                athleteAnalytics = analytics
+                print("📊 RacePlanView: Analytics recalculated with fresh data:")
+                print("   basePace: \(analytics.basePaceMinutesPerKilometer?.description ?? "nil") min/km")
+                print("   maxHR: \(analytics.maxHeartRate?.description ?? "nil") bpm")
+                print("   avgHR: \(analytics.averageHeartRate?.description ?? "nil") bpm")
+                recalculateStrategy()
+            }
             return
         }
         
@@ -2144,7 +2216,8 @@ struct RacePlanView: View {
                 elevationGainM: segment.elevationGainM,
                 elevationLossM: segment.elevationLossM,
                 estimatedTimeSeconds: segment.estimatedTimeSeconds,
-                averageHeartRate: segment.averageHeartRate
+                averageHeartRate: segment.averageHeartRate,
+                targetHeartRate: nil // Will be calculated in buildSectionPlans
             )
         }
         
@@ -2211,7 +2284,6 @@ struct RacePlanView: View {
                 aidStations = finalAidStations
             }
             
-            athleteAnalytics = nil
             pacingSegments = []
             // Keep existing fuelingStations if possible, or reset
             // fuelingStations = [] 
@@ -2219,12 +2291,12 @@ struct RacePlanView: View {
             
             weatherLocation = locationDisplay
             weatherCoordinates = finalCoordinates
-            
-            recalculateStrategy()
+            // Note: athleteAnalytics will be set after fetching fresh workouts from database
         }
         
+        // ALWAYS fetch fresh workouts from database - never use cache
         let workouts = try await SupabaseService.fetchWorkouts(userId: userId)
-        print("📊 RacePlanView: Fetched \(workouts.count) workouts")
+        print("📊 RacePlanView: Fetched \(workouts.count) fresh workouts from database (cache bypassed)")
         if !workouts.isEmpty {
             print("   First workout: \(workouts.first?.distanceM ?? 0)m, HR: \(workouts.first?.avgHR ?? 0)/\(workouts.first?.maxHR ?? 0) bpm")
         }
@@ -2235,11 +2307,17 @@ struct RacePlanView: View {
         let latestHealthMetric = healthHistory.first
         let analytics = await buildAthleteAnalytics(userId: userId, workouts: workouts, healthMetric: latestHealthMetric)
         
-        print("📊 RacePlanView: Analytics calculated:")
+        print("📊 RacePlanView: Analytics calculated from fresh database data:")
         print("   basePace: \(analytics.basePaceMinutesPerKilometer?.description ?? "nil") min/km")
         print("   maxHR: \(analytics.maxHeartRate?.description ?? "nil") bpm")
         print("   avgHR: \(analytics.averageHeartRate?.description ?? "nil") bpm")
         print("   caloriesPerHour: \(analytics.caloriesPerHour) kcal/h")
+        
+        // Set analytics and recalculate strategy with fresh data
+        await MainActor.run {
+            athleteAnalytics = analytics
+            recalculateStrategy()
+        }
         let baseDistance = computedDistanceKm > 0 ? computedDistanceKm : (finalAidStations.last?.distance ?? 0)
         let sectionPlans = buildSectionPlans(
             aidStations: finalAidStations,
@@ -2277,6 +2355,17 @@ struct RacePlanView: View {
             athleteAnalytics = analytics
             pacingSegments = sectionPlans.map { $0.pacingSegment }
             fuelingStations = fuelingPlan
+            
+            // Recalculate metrics from trackPoints if we have them
+            // This ensures metrics are up-to-date when new workout data arrives
+            if !trackPoints.isEmpty && !aidStations.isEmpty {
+                let recalculatedMetrics = buildSegmentMetrics(for: aidStations, using: trackPoints)
+                aidStationMetrics = Dictionary(uniqueKeysWithValues: recalculatedMetrics.enumerated().map { ($0.offset, $0.element) })
+                print("✅ Recalculated aid station metrics from trackPoints: \(aidStationMetrics.count) segments")
+                
+                // Recalculate strategy with updated metrics
+                recalculateStrategy()
+            }
         }
         
         await fetchWeather(location: locationDisplay, coordinates: coordinatesForWeather)
@@ -2516,16 +2605,29 @@ struct RacePlanView: View {
         
         let resolvedCoordinates: WeatherCoordinates?
         if let overrideCoordinates {
+            // Use provided coordinates (from GPX file)
             resolvedCoordinates = overrideCoordinates
+            print("📍 Using provided coordinates: \(overrideCoordinates.latitude), \(overrideCoordinates.longitude)")
+        } else if let currentCoords = await MainActor.run(body: { weatherCoordinates }) {
+            // Prioritize: Use existing weather coordinates (from GPX file) if available
+            resolvedCoordinates = currentCoords
+            print("📍 Using existing GPX coordinates: \(currentCoords.latitude), \(currentCoords.longitude)")
         } else if let parsed = parseCoordinateString(location) {
+            // Parse coordinates from location string
             resolvedCoordinates = parsed
+            print("📍 Parsed coordinates from location string: \(parsed.latitude), \(parsed.longitude)")
         } else {
+            // Fallback: geocode location string (only if no GPX coordinates available)
+            print("⚠️ No GPX coordinates available, geocoding location string: \(location)")
             resolvedCoordinates = await geocodeLocation(location)
+            if let geocoded = resolvedCoordinates {
+                print("📍 Geocoded location: \(geocoded.latitude), \(geocoded.longitude)")
+            }
         }
         
         // First, ensure we have coordinates
         guard let coordinates = resolvedCoordinates else {
-            print("⚠️ Failed to geocode location: \(location)")
+            print("⚠️ Failed to resolve coordinates for location: \(location)")
             isLoadingWeather = false
             return
         }
@@ -2835,7 +2937,26 @@ struct RacePlanView: View {
             await MainActor.run {
                 aidStations = orderedStations
                 aidStationMetrics = Dictionary(uniqueKeysWithValues: metrics.enumerated().map { ($0.offset, $0.element) })
-                recalculateStrategy()
+            }
+            
+            // Reload race details to update the calendar with new segments
+            // This ensures the race calendar cards are updated even if athleteAnalytics is nil
+            if let plan = selectedRace {
+                do {
+                    try await loadRaceDetails(for: plan, userId: userId, forceRefresh: true)
+                    print("✅ Reloaded race details after saving stations")
+                } catch {
+                    print("⚠️ Could not reload race details after saving: \(error)")
+                    // Fallback: try recalculation if analytics are available
+                    await MainActor.run {
+                        recalculateStrategy()
+                    }
+                }
+            } else {
+                // No selected race, just try recalculation
+                await MainActor.run {
+                    recalculateStrategy()
+                }
             }
             
             print("✅ Aid stations saved successfully")
@@ -2979,19 +3100,19 @@ struct RacePlanView: View {
         guard !trackPoints.isEmpty else {
             return stations.enumerated().map { index, station in
                 if index == 0 {
-                    return AidStationSegmentMetrics(segmentDistanceM: 0, elevationGainM: 0, elevationLossM: 0, estimatedTimeSeconds: 0, averageHeartRate: nil)
+                    return AidStationSegmentMetrics(segmentDistanceM: 0, elevationGainM: 0, elevationLossM: 0, estimatedTimeSeconds: 0, averageHeartRate: nil, targetHeartRate: nil)
                 } else {
                     let previous = stations[index - 1]
                     let segmentDistanceM = max(0, (station.distance - previous.distance) * 1000)
                     let estimated = (segmentDistanceM / 1000.0) * Double(defaultPaceSecondsPerKm)
-                    return AidStationSegmentMetrics(segmentDistanceM: segmentDistanceM, elevationGainM: 0, elevationLossM: 0, estimatedTimeSeconds: estimated, averageHeartRate: nil)
+                    return AidStationSegmentMetrics(segmentDistanceM: segmentDistanceM, elevationGainM: 0, elevationLossM: 0, estimatedTimeSeconds: estimated, averageHeartRate: nil, targetHeartRate: nil)
                 }
             }
         }
         var metrics: [AidStationSegmentMetrics] = []
         for index in stations.indices {
             if index == 0 {
-                metrics.append(AidStationSegmentMetrics(segmentDistanceM: 0, elevationGainM: 0, elevationLossM: 0, estimatedTimeSeconds: 0, averageHeartRate: nil))
+                metrics.append(AidStationSegmentMetrics(segmentDistanceM: 0, elevationGainM: 0, elevationLossM: 0, estimatedTimeSeconds: 0, averageHeartRate: nil, targetHeartRate: nil))
             } else {
                 let startDistanceM = stations[index - 1].distance * 1000.0
                 let endDistanceM = stations[index].distance * 1000.0
@@ -3005,7 +3126,7 @@ struct RacePlanView: View {
     
     private func computeSegmentMetrics(trackPoints: [TrackPoint], startIndex: Int, endIndex: Int) -> AidStationSegmentMetrics {
         guard startIndex < endIndex, endIndex < trackPoints.count else {
-            return AidStationSegmentMetrics(segmentDistanceM: 0, elevationGainM: 0, elevationLossM: 0, estimatedTimeSeconds: 0, averageHeartRate: nil)
+            return AidStationSegmentMetrics(segmentDistanceM: 0, elevationGainM: 0, elevationLossM: 0, estimatedTimeSeconds: 0, averageHeartRate: nil, targetHeartRate: nil)
         }
         let startPoint = trackPoints[startIndex]
         let endPoint = trackPoints[endIndex]
@@ -3028,7 +3149,32 @@ struct RacePlanView: View {
         }
         let estimatedTime = (segmentDistanceM / 1000.0) * Double(defaultPaceSecondsPerKm)
         let averageHR = hrCount > 0 ? hrTotal / hrCount : nil
-        return AidStationSegmentMetrics(segmentDistanceM: segmentDistanceM, elevationGainM: gain, elevationLossM: loss, estimatedTimeSeconds: estimatedTime, averageHeartRate: averageHR)
+        return AidStationSegmentMetrics(segmentDistanceM: segmentDistanceM, elevationGainM: gain, elevationLossM: loss, estimatedTimeSeconds: estimatedTime, averageHeartRate: averageHR, targetHeartRate: nil)
+    }
+    
+    /// Calculates target heart rate for a race segment based on physiological maxHR and race fraction
+    /// - Parameters:
+    ///   - maxHeartRate: The user's physiological maximum heart rate (derived from averageHR / 0.75)
+    ///   - raceFraction: The fraction of total race distance completed at the end of this segment (0.0 to 1.0)
+    /// - Returns: Target heart rate in bpm, or nil if maxHeartRate is not available
+    private func calculateTargetHeartRate(maxHeartRate: Double?, raceFraction: Double) -> Double? {
+        guard let maxHR = maxHeartRate, maxHR > 0 else { return nil }
+        
+        // Determine effort percentage based on race fraction
+        // First 25% of race: 75% of maxHR (conservative start)
+        // 25-50% of race: 77.5% of maxHR (building effort)
+        // >50% of race: 80% of maxHR (sustained effort)
+        let hrPercent: Double
+        if raceFraction <= 0.25 {
+            hrPercent = 0.75
+        } else if raceFraction <= 0.5 {
+            hrPercent = 0.775
+        } else {
+            hrPercent = 0.80
+        }
+        
+        let targetHR = maxHR * hrPercent
+        return targetHR
     }
     
     private func nearestTrackPointIndex(for distanceM: Double, in trackPoints: [TrackPoint]) -> Int {
@@ -3223,10 +3369,16 @@ struct RacePlanView: View {
                 elevationGainM: 0,
                 elevationLossM: 0,
                 estimatedTimeSeconds: 0,
-                averageHeartRate: nil
+                averageHeartRate: nil,
+                targetHeartRate: nil
             )
             
             let raceFraction = totalDistanceKm > 0 ? toStation.distance / totalDistanceKm : 0
+            
+            // Calculate HR percentage based on race fraction (used for effort level and target HR calculation)
+            // First 25% of race: 75% of maxHR (conservative start)
+            // 25-50% of race: 77.5% of maxHR (building effort)
+            // >50% of race: 80% of maxHR (sustained effort)
             let hrPercent: Double
             if raceFraction <= 0.25 {
                 hrPercent = 0.75
@@ -3236,21 +3388,37 @@ struct RacePlanView: View {
                 hrPercent = 0.80
             }
             
-            // Heart rate string - show "-" if no provider data
+            // Calculate target HR for this segment based on physiological maxHR and race fraction
+            let targetHR = calculateTargetHeartRate(maxHeartRate: maxHeartRate, raceFraction: raceFraction)
+            
+            // Heart rate string - prioritize calculated target HR, fallback to database value
+            // Priority order:
+            // 1. Calculated target HR based on physiological maxHR and race fraction (PRIMARY)
+            // 2. Actual HR from track points/samples for this segment (from Strava activity samples) - FALLBACK
+            // 3. "-" if no data available
             let heartRateString: String
-            if let maxHR = maxHeartRate {
-                let targetHR = maxHR * hrPercent
-                let hrValue = Int(round(targetHR))
+            if let calculatedTargetHR = targetHR {
+                // PRIMARY: Use calculated target HR based on physiological maxHR
+                // Uses physiological maxHR (derived from averageHR / 0.75) multiplied by effort percentage
+                let hrValue = Int(round(calculatedTargetHR))
                 // Ensure we don't show extremely low HR if something is wrong
                 if hrValue > 0 {
                     heartRateString = "\(hrValue) bpm"
                 } else {
                     heartRateString = "-"
                 }
-                print("   💓 Segment \(index): HR = \(heartRateString) (maxHR: \(maxHR), percent: \(hrPercent))")
+                print("   💓 Segment \(index): HR = \(heartRateString) (calculated target, maxHR: \(maxHeartRate ?? 0) bpm, percent: \(hrPercent * 100)%, race fraction: \(String(format: "%.1f", raceFraction * 100))%)")
+                if let dbHR = metric.averageHeartRate, dbHR > 0 {
+                    print("   💓 Segment \(index): Database HR = \(Int(round(dbHR))) bpm (available but not used - showing calculated target instead)")
+                }
+            } else if let dbHR = metric.averageHeartRate, dbHR > 0 {
+                // FALLBACK: Use actual heart rate from database if calculated target HR is not available
+                // This is the average HR for this specific segment from actual workout data
+                heartRateString = "\(Int(round(dbHR))) bpm"
+                print("   💓 Segment \(index): HR = \(heartRateString) (from database/track points - fallback, calculated target HR not available)")
             } else {
                 heartRateString = "-"
-                print("   ⚠️ Segment \(index): No maxHR available - showing '-'")
+                print("   ⚠️ Segment \(index): No HR data available - showing '-'")
             }
             
             // Calculate adjusted pace - show "-" if no provider data
@@ -3259,12 +3427,29 @@ struct RacePlanView: View {
             let durationString: String
             
             if let baseP = basePace {
+                // Ultra distance adjustment: For races longer than 50km, apply pace adjustment
+                // This accounts for the fact that ultra pace is slower than training pace
+                let ultraDistanceMultiplier: Double
+                if totalDistanceKm >= 100 {
+                    // 100km+ races: 30% slower than training pace
+                    ultraDistanceMultiplier = 1.30
+                } else if totalDistanceKm >= 80 {
+                    // 80-100km races: 25% slower
+                    ultraDistanceMultiplier = 1.25
+                } else if totalDistanceKm >= 50 {
+                    // 50-80km races: 20% slower
+                    ultraDistanceMultiplier = 1.20
+                } else {
+                    // Shorter races: no adjustment (use training pace)
+                    ultraDistanceMultiplier = 1.0
+                }
+                
                 let heatMultiplier = 1 + 0.01 * max(0, temperature - 15.0)
                 let fatigueMultiplier = 1 + analytics.fatigueRatePerHour * cumulativeHours
                 // Hill penalty should be per km, not total for segment
                 // 0.5 min per 100m of elevation gain, distributed across segment distance
                 let hillPenaltyPerKm = segmentDistance > 0 ? 0.5 * (metric.elevationGainM / segmentDistance / 100.0) : 0
-                let adjustedPace = max(3.0, baseP * heatMultiplier * fatigueMultiplier + hillPenaltyPerKm)
+                let adjustedPace = max(3.0, baseP * ultraDistanceMultiplier * heatMultiplier * fatigueMultiplier + hillPenaltyPerKm)
                 let sectionMinutes = adjustedPace * segmentDistance
                 sectionHours = sectionMinutes / 60.0
                 cumulativeHours += sectionHours
@@ -3439,7 +3624,7 @@ struct RacePlanView: View {
         let totalSeconds = Int(round(minutesPerKm * 60))
         let minutes = totalSeconds / 60
         let seconds = totalSeconds % 60
-        return String(format: "%d:%02d /km", minutes, seconds)
+        return String(format: "%d:%02d m/km", minutes, seconds)
     }
     
     private func buildAthleteAnalytics(userId: UUID, workouts: [WorkoutSummary], healthMetric: HealthMetrics?) async -> AthleteAnalytics {
@@ -3463,29 +3648,42 @@ struct RacePlanView: View {
         let focusWorkouts = Array(sortedWorkouts.prefix(focusCount))
         
         // Calculate average HR from workouts
+        // This includes average_heart_rate from Strava activities (and other providers)
+        // We use the top 20% of workouts by distance to get representative training HR
         let averageHR = focusWorkouts.compactMap { workout -> Double? in
             guard let hr = workout.avgHR else { return nil }
             return Double(hr)
         }.averageValue()
         
-        // Calculate max HR - use actual maxHR from workouts if available, otherwise estimate from averageHR
-        let maxHR: Double? = {
-            // First, try to get actual maxHR from workouts
-            let actualMaxHRs = focusWorkouts.compactMap { workout -> Double? in
-                workout.maxHR.map { Double($0) }
+        // Calculate user's physiological max HR (NOT from activity maxHR)
+        // 
+        // IMPORTANT: We IGNORE max_heart_rate from Strava activities because:
+        // - Activity maxHR is the max HR during that specific workout/race
+        // - This is NOT the user's actual physiological maximum heart rate
+        // - Using race maxHR would skew calculations (races push HR higher than training)
+        //
+        // Primary method: Estimate maxHR from averageHR (most accurate for individual)
+        // Formula: maxHR ≈ averageHR / 0.75 (assuming average training HR is 75% of maxHR)
+        // This uses average_heart_rate from Strava activities to derive physiological maxHR
+        var maxHR: Double? = nil
+        
+        if let avgHR = averageHR {
+            maxHR = avgHR / 0.75
+            print("   💓 Calculated maxHR from averageHR: \(maxHR!) bpm (avgHR: \(avgHR) bpm)")
+        }
+        
+        // Fallback: Calculate from user's age if averageHR not available
+        // Formula: maxHR = 220 - age (standard formula)
+        if maxHR == nil {
+            if let userProfile = try? await SupabaseService.fetchUserProfile(userId: userId) {
+                let birthDate = userProfile.birthDate
+                let age = Calendar.current.dateComponents([.year], from: birthDate, to: Date()).year ?? 0
+                if age > 0 && age < 120 { // Sanity check
+                    maxHR = Double(220 - age)
+                    print("   💓 Estimated maxHR from age: \(maxHR!) bpm (age: \(age))")
+                }
             }
-            
-            if let actualMax = actualMaxHRs.max() {
-                // Use the highest maxHR from workouts
-                return actualMax
-            }
-            
-            // Fallback: Estimate maxHR from averageHR
-            // Formula: maxHR ≈ averageHR / 0.75 (assuming average is 75% of max during training)
-            // More accurate: maxHR ≈ averageHR / 0.70-0.80 depending on effort
-            // Using 0.75 as middle ground for moderate effort training
-            return averageHR.map { ($0 / 0.75) }
-        }()
+        }
         
         // Only calculate basePace if we have valid workout data
         let basePace = focusWorkouts.compactMap { workout -> Double? in
@@ -4404,7 +4602,6 @@ struct LocationPickerModal: View {
                 .padding()
                 .background(HYKATheme.Light.card)
             }
-            .dismissKeyboardOnTap()
             .background(HYKATheme.Light.card)
             .navigationTitle("Select Location")
             .navigationBarTitleDisplayMode(.inline)

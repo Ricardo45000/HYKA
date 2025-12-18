@@ -118,23 +118,25 @@
 	<key>UIAppFonts</key>
 	<array>
 		<!-- Plus Jakarta Sans Variable Fonts -->
-		<string>Inter,Plus_Jakarta_Sans/Plus_Jakarta_Sans/PlusJakartaSans-VariableFont_wght.ttf</string>
-		<string>Inter,Plus_Jakarta_Sans/Plus_Jakarta_Sans/PlusJakartaSans-Italic-VariableFont_wght.ttf</string>
+		<string>PlusJakartaSans-VariableFont_wght.ttf</string>
+		<string>PlusJakartaSans-Italic-VariableFont_wght.ttf</string>
 		<!-- Plus Jakarta Sans Static Fonts -->
-		<string>Inter,Plus_Jakarta_Sans/Plus_Jakarta_Sans/static/PlusJakartaSans-Regular.ttf</string>
-		<string>Inter,Plus_Jakarta_Sans/Plus_Jakarta_Sans/static/PlusJakartaSans-Medium.ttf</string>
-		<string>Inter,Plus_Jakarta_Sans/Plus_Jakarta_Sans/static/PlusJakartaSans-SemiBold.ttf</string>
-		<string>Inter,Plus_Jakarta_Sans/Plus_Jakarta_Sans/static/PlusJakartaSans-Bold.ttf</string>
-		<string>Inter,Plus_Jakarta_Sans/Plus_Jakarta_Sans/static/PlusJakartaSans-ExtraBold.ttf</string>
+		<string>PlusJakartaSans-Regular.ttf</string>
+		<string>PlusJakartaSans-Medium.ttf</string>
+		<string>PlusJakartaSans-SemiBold.ttf</string>
+		<string>PlusJakartaSans-Bold.ttf</string>
+		<string>PlusJakartaSans-ExtraBold.ttf</string>
 		<!-- Inter Variable Fonts -->
-		<string>Inter,Plus_Jakarta_Sans/Inter/Inter-VariableFont_opsz,wght.ttf</string>
-		<string>Inter,Plus_Jakarta_Sans/Inter/Inter-Italic-VariableFont_opsz,wght.ttf</string>
+		<string>Inter-VariableFont_opsz,wght.ttf</string>
+		<string>Inter-Italic-VariableFont_opsz,wght.ttf</string>
 		<!-- Inter Static Fonts (using 18pt as base) -->
-		<string>Inter,Plus_Jakarta_Sans/Inter/static/Inter_18pt-Regular.ttf</string>
-		<string>Inter,Plus_Jakarta_Sans/Inter/static/Inter_18pt-Medium.ttf</string>
-		<string>Inter,Plus_Jakarta_Sans/Inter/static/Inter_18pt-SemiBold.ttf</string>
-		<string>Inter,Plus_Jakarta_Sans/Inter/static/Inter_18pt-Bold.ttf</string>
-		<string>Inter,Plus_Jakarta_Sans/Inter/static/Inter_18pt-Light.ttf</string>
+		<string>Inter_18pt-Regular.ttf</string>
+		<string>Inter_18pt-Medium.ttf</string>
+		<string>Inter_18pt-SemiBold.ttf</string>
+		<string>Inter_18pt-Bold.ttf</string>
+		<string>Inter_18pt-Light.ttf</string>
 	</array>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>

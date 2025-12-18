@@ -126,7 +126,7 @@ struct AppError: Identifiable {
         
         // OAuth errors
         if errorString.contains("oauth") || errorString.contains("invalid callback") {
-            return "Connexion failed. Please try again."
+            return "Connection failed. Please try again."
         }
         
         // Token errors

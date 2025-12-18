@@ -40,6 +40,7 @@ struct RaceDayConditionsView: View {
             }
             .padding(HYKATheme.spacingL)
         }
+        .scrollDismissesKeyboard(.interactively)
         .background(HYKATheme.backgroundColor)
     }
 }

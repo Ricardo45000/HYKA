@@ -104,7 +104,6 @@ struct RaceDetailsView: View {
                 }
             }
             .scrollDismissesKeyboard(.interactively)
-            .dismissKeyboardOnTap()
             .keyboardDoneToolbar()
         }
         .alert("Sign Out", isPresented: $showSignOutAlert) {

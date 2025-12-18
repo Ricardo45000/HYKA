@@ -14,7 +14,7 @@ struct OnboardingFlowView: View {
     @State private var gpxFileName: String? = nil
     @State private var gpxFileData: Data? = nil
     
-    private let totalSteps = 9
+    private let totalSteps = 8
     
     var body: some View {
         NavigationView {
@@ -48,11 +48,8 @@ struct OnboardingFlowView: View {
                             )
                                 .tag(3)
                             
-                            SubscriptionView(onNext: nextStep, onSkip: nextStep)
-                                .tag(4)
-                            
                             ConnectDevicesView(onNext: nextStep, onSkip: {}, onBack: previousStep)
-                                .tag(5)
+                                .tag(4)
                             
                             UploadGPXView(
                                 onNext: nextStep,
@@ -66,14 +63,14 @@ struct OnboardingFlowView: View {
                                 onUploadStatusChange: { isUploadingGPX = $0 },
                                 isContinueDisabled: isUploadingGPX
                             )
-                                .tag(6)
+                                .tag(5)
                             
                             RaceDetailsView(
                                 raceDetails: $raceDetails,
                                 onNext: nextStep,
                                 onBack: previousStep
                             )
-                                .tag(7)
+                                .tag(6)
                             
                             AidStationsView(
                                 aidStations: $aidStations,
@@ -81,14 +78,14 @@ struct OnboardingFlowView: View {
                                 onNext: nextStep,
                                 onBack: previousStep
                             )
-                                .tag(8)
+                                .tag(7)
                             
                             StrategyPreferencesView(
                                 preferences: $strategyPreferences,
                                 onGenerate: generateStrategy,
                                 onBack: previousStep
                             )
-                                .tag(9)
+                                .tag(8)
                         }
                         .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
                         .transition(.asymmetric(
@@ -136,10 +133,10 @@ struct OnboardingFlowView: View {
         case 1: return "Tell us who you are"
         case 2: return "Tell us who you are"
         case 3: return "Your running profile"
-        case 4: return "Subscription"
-        case 5: return "Connect your devices"
-        case 6: return "Upload your race course"
-        case 7: return "Tell us about your race"
+        case 4: return "Connect your devices"
+        case 5: return "Upload your race course"
+        case 6: return "Tell us about your race"
+        case 7: return "Aid Stations"
         case 8: return "Strategy Preferences"
         default: return "Onboarding"
         }

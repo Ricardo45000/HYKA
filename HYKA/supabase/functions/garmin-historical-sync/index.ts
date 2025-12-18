@@ -266,7 +266,7 @@ async function refreshGarminToken(refreshToken: string) {
     
     if (!clientId || !clientSecret) throw new Error("Missing Garmin credentials")
     
-    const url = "https://connectapi.garmin.com/oauth-service/oauth/exchange/refresh_token"
+    const url = "https://diauth.garmin.com/di-oauth2-service/oauth/token"
     
     const response = await fetch(url, {
         method: 'POST',

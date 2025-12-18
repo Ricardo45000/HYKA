@@ -71,7 +71,6 @@ struct SignUpProfileView: View {
             .padding(.horizontal, HYKATheme.spacingL)
             .padding(.bottom, HYKATheme.spacingXXL)
         }
-        .dismissKeyboardOnTap()
     }
     
     private var signUpStep: some View {

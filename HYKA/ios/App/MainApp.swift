@@ -54,7 +54,6 @@ struct HYKAApp: App {
                 }
             }
             .preferredColorScheme(.dark)
-            .globalKeyboardDismiss()
             .keyboardDoneToolbar()
             .onAppear {
                 print("")

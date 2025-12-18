@@ -7,7 +7,7 @@ struct WearableConnectionsPageView: View {
     var body: some View {
         WearableConnectionsView(displayMode: .fullScreen)
             .environmentObject(session)
-            .navigationTitle("Connexion with your wearable")
+            .navigationTitle("Connection with your wearable")
             .navigationBarTitleDisplayMode(.large)
             .toolbarColorScheme(.light, for: .navigationBar)
             .onAppear {

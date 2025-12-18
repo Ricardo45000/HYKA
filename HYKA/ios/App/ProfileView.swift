@@ -122,7 +122,7 @@ struct ProfileView: View {
                                             .foregroundColor(Color.hykaPurple)
                                             .frame(width: 24)
                                         
-                                        Text("Connexion with your wearable")
+                                        Text("Connection with your wearable")
                                             .font(HYKATheme.body)
                                             .foregroundColor(HYKATheme.Light.foreground)
                                         

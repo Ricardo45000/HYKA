@@ -150,6 +150,7 @@ struct UploadGPXView: View {
                     }
                 }
             }
+            .scrollDismissesKeyboard(.interactively)
             .background(HYKATheme.backgroundColor)
         }
         .fileImporter(

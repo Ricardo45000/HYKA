@@ -268,7 +268,6 @@ struct EditAidStationsModal: View {
                 }
             }
             .scrollDismissesKeyboard(.interactively)
-            .dismissKeyboardOnTap()
             .background(HYKATheme.Light.background)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

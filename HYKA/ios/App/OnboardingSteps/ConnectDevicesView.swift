@@ -32,7 +32,7 @@ struct ConnectDevicesView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            OnboardingProgress(currentStep: 5, totalSteps: 8, showSignOut: true) {
+            OnboardingProgress(currentStep: 4, totalSteps: 8, showSignOut: true) {
                 showSignOutAlert = true
             }
             .environmentObject(session)
@@ -208,6 +208,7 @@ struct ConnectDevicesView: View {
                     }
                 }
             }
+            .scrollDismissesKeyboard(.interactively)
             .background(HYKATheme.backgroundColor)
             .withErrorDisplay()
         }
@@ -283,7 +284,7 @@ struct ConnectDevicesView: View {
             // Get root view controller for OAuth presentation
             guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                   let rootViewController = windowScene.windows.first?.rootViewController else {
-                ErrorManager.shared.showError(title: "Connexion Failed", message: "Could not find view controller for OAuth")
+                ErrorManager.shared.showError(title: "Connection Failed", message: "Could not find view controller for OAuth")
                 isLoading = false
                 return
             }
@@ -305,9 +306,9 @@ struct ConnectDevicesView: View {
             } catch {
                 print("❌ Error connecting to \(deviceName): \(error)")
                 if case DeviceOAuthError.notImplemented(let message) = error {
-                    ErrorManager.shared.showError(title: "Connexion Not Available", message: "\(deviceName) connection not yet available. \(message)")
+                    ErrorManager.shared.showError(title: "Connection Not Available", message: "\(deviceName) connection not yet available. \(message)")
                 } else {
-                    ErrorManager.shared.showError(error, title: "Connexion Failed")
+                    ErrorManager.shared.showError(error, title: "Connection Failed")
                 }
             }
             
