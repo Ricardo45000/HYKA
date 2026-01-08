@@ -298,7 +298,7 @@ struct AuthView: View {
             
             // Forward to main app handler
             // We need to access the session's handleOAuthCallback
-            if url.scheme == "com.hyka.app" && url.absoluteString.lowercased().contains("callback") {
+            if url.scheme == "app.hyka.com" && url.absoluteString.lowercased().contains("callback") {
                 print("✅ AuthView detected OAuth callback, forwarding to SessionManager")
                 Task { @MainActor in
                     await session.handleOAuthCallback(url: url)

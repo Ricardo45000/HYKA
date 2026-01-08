@@ -351,7 +351,7 @@ final class SessionManager: NSObject, ObservableObject {
     
     /// Sign in with Google using ASWebAuthenticationSession (recommended by Apple)
     func signInWithGoogle() async throws {
-        let redirectURL = URL(string: "com.hyka.app://callback")!
+        let redirectURL = URL(string: "app.hyka.com://callback")!
         try await performOAuthWithASWebAuthenticationSession(
             provider: "google",
             redirectURL: redirectURL
@@ -360,7 +360,7 @@ final class SessionManager: NSObject, ObservableObject {
     
     /// Sign in with Facebook using ASWebAuthenticationSession (recommended by Apple)
     func signInWithFacebook() async throws {
-        let redirectURL = URL(string: "com.hyka.app://callback")!
+        let redirectURL = URL(string: "app.hyka.com://callback")!
         try await performOAuthWithASWebAuthenticationSession(
             provider: "facebook",
             redirectURL: redirectURL
@@ -538,8 +538,8 @@ final class SessionManager: NSObject, ObservableObject {
                         if description.contains("state parameter missing") {
                             print("   1. This usually means Supabase Site URL doesn't match")
                             print("   2. Go to Supabase Dashboard → Auth → URL Configuration")
-                            print("   3. Set Site URL to: com.hyka.app://callback")
-                            print("   4. Make sure Redirect URLs includes: com.hyka.app://**")
+                            print("   3. Set Site URL to: app.hyka.com://callback")
+                            print("   4. Make sure Redirect URLs includes: app.hyka.com://**")
                             print("   5. Click Save and wait 1-2 minutes for changes to propagate")
                             print("   6. Try OAuth again")
                         }
@@ -625,7 +625,7 @@ final class SessionManager: NSObject, ObservableObject {
                 // Create a session URL that Supabase SDK can handle
                 // We'll use the access token as a code parameter (hack, but might work)
                 // Actually, let's try constructing a URL with the tokens as query params
-                var components = URLComponents(string: "com.hyka.app://callback")!
+                var components = URLComponents(string: "app.hyka.com://callback")!
                 components.queryItems = [
                     URLQueryItem(name: "access_token", value: accessToken),
                     URLQueryItem(name: "refresh_token", value: refreshToken),
@@ -780,7 +780,7 @@ final class SessionManager: NSObject, ObservableObject {
                         print("✅ Refresh token exchange successful")
                         
                         // Now create a session URL with the new tokens
-                        var sessionComponents = URLComponents(string: "com.hyka.app://callback")!
+                        var sessionComponents = URLComponents(string: "app.hyka.com://callback")!
                         sessionComponents.queryItems = [
                             URLQueryItem(name: "access_token", value: newAccessToken),
                             URLQueryItem(name: "refresh_token", value: newRefreshToken)
@@ -833,7 +833,7 @@ final class SessionManager: NSObject, ObservableObject {
                             
                             // Try using session(from:) with a properly formatted callback URL
                             // Create a callback URL with the tokens as query parameters
-                            var callbackURL = URLComponents(string: "com.hyka.app://callback")!
+                            var callbackURL = URLComponents(string: "app.hyka.com://callback")!
                             callbackURL.queryItems = [
                                 URLQueryItem(name: "access_token", value: newAccessToken),
                                 URLQueryItem(name: "refresh_token", value: newRefreshToken),

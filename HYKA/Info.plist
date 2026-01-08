@@ -24,16 +24,18 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>com.hyka.app</string>
+			<string>app.hyka.com</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.hyka.app</string>
+				<string>app.hyka.com</string>
 				<string>hyka</string>
 			</array>
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>fbapi</string>
@@ -80,6 +82,23 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>UIAppFonts</key>
+	<array>
+		<string>PlusJakartaSans-VariableFont_wght.ttf</string>
+		<string>PlusJakartaSans-Italic-VariableFont_wght.ttf</string>
+		<string>PlusJakartaSans-Regular.ttf</string>
+		<string>PlusJakartaSans-Medium.ttf</string>
+		<string>PlusJakartaSans-SemiBold.ttf</string>
+		<string>PlusJakartaSans-Bold.ttf</string>
+		<string>PlusJakartaSans-ExtraBold.ttf</string>
+		<string>Inter-VariableFont_opsz,wght.ttf</string>
+		<string>Inter-Italic-VariableFont_opsz,wght.ttf</string>
+		<string>Inter_18pt-Regular.ttf</string>
+		<string>Inter_18pt-Medium.ttf</string>
+		<string>Inter_18pt-SemiBold.ttf</string>
+		<string>Inter_18pt-Bold.ttf</string>
+		<string>Inter_18pt-Light.ttf</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -115,28 +134,5 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-	<key>UIAppFonts</key>
-	<array>
-		<!-- Plus Jakarta Sans Variable Fonts -->
-		<string>PlusJakartaSans-VariableFont_wght.ttf</string>
-		<string>PlusJakartaSans-Italic-VariableFont_wght.ttf</string>
-		<!-- Plus Jakarta Sans Static Fonts -->
-		<string>PlusJakartaSans-Regular.ttf</string>
-		<string>PlusJakartaSans-Medium.ttf</string>
-		<string>PlusJakartaSans-SemiBold.ttf</string>
-		<string>PlusJakartaSans-Bold.ttf</string>
-		<string>PlusJakartaSans-ExtraBold.ttf</string>
-		<!-- Inter Variable Fonts -->
-		<string>Inter-VariableFont_opsz,wght.ttf</string>
-		<string>Inter-Italic-VariableFont_opsz,wght.ttf</string>
-		<!-- Inter Static Fonts (using 18pt as base) -->
-		<string>Inter_18pt-Regular.ttf</string>
-		<string>Inter_18pt-Medium.ttf</string>
-		<string>Inter_18pt-SemiBold.ttf</string>
-		<string>Inter_18pt-Bold.ttf</string>
-		<string>Inter_18pt-Light.ttf</string>
-	</array>
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
 </dict>
 </plist>

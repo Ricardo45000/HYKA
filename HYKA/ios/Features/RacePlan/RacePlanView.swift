@@ -2058,6 +2058,11 @@ struct RacePlanView: View {
            cachedDetail.lastUpdated == plan.updatedAt {
             // Load cached race structure (aid stations, track points, etc.) but fetch fresh workouts
             await MainActor.run {
+                // Ensure we have the latest metadata from store before applying cached detail
+                if let storedMetadata = RacePlanMetadataStore.load(for: plan.id) {
+                    raceMetadata = storedMetadata
+                    print("✅ Loaded latest metadata before applying cached detail: date=\(storedMetadata.raceDate?.description ?? "nil")")
+                }
                 applyCachedDetail(cachedDetail, skipRecalculation: true) // Skip recalculation, we'll do it with fresh data
             }
             await fetchWeather(location: cachedDetail.weatherLocation, coordinates: cachedDetail.weatherCoordinates)
@@ -2191,7 +2196,35 @@ struct RacePlanView: View {
             print("📊 Calculated cumulative elevation gain: \(String(format: "%.2f", cumulativeElevationGain))m from \(trackPointsFromDB.count) track points")
         }
         
+        // Always load latest metadata from store first to preserve user-edited values (like race date)
         var updatedMetadata = RacePlanMetadataStore.load(for: plan.id) ?? RacePlanMetadata(raceDate: nil, startTime: nil, elevationGain: nil, distance: nil, notes: nil)
+        
+        // Try to load race_date from database if not in metadata
+        if updatedMetadata.raceDate == nil {
+            do {
+                let racePlanResponse = try await Supa.client
+                    .from("race_plans")
+                    .select("race_date")
+                    .eq("id", value: plan.id.uuidString)
+                    .single()
+                    .execute()
+                
+                if let json = try? JSONSerialization.jsonObject(with: racePlanResponse.data, options: []) as? [String: Any],
+                   let raceDateString = json["race_date"] as? String {
+                    let formatter = ISO8601DateFormatter()
+                    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                    if let raceDate = formatter.date(from: raceDateString) {
+                        updatedMetadata.raceDate = raceDate
+                        print("📋 Loaded race_date from database: \(raceDateString)")
+                    }
+                }
+            } catch {
+                print("⚠️ Could not load race_date from database: \(error)")
+            }
+        }
+        
+        print("📋 Loaded metadata: date=\(updatedMetadata.raceDate?.description ?? "nil"), distance=\(updatedMetadata.distance?.description ?? "nil"), elevation=\(updatedMetadata.elevationGain?.description ?? "nil")")
+        
         if computedDistanceKm > 0 {
             updatedMetadata.distance = computedDistanceKm
         }
@@ -2377,6 +2410,44 @@ struct RacePlanView: View {
         await MainActor.run {
             isLoading = true
             selectedRace = plan
+            racePlanId = plan.id
+            
+            // Always load metadata from store first to ensure we have the latest
+            var storedMetadata = RacePlanMetadataStore.load(for: plan.id) ?? RacePlanMetadata(raceDate: nil, startTime: nil, elevationGain: nil, distance: nil, notes: nil)
+            
+            // Try to load race_date from database if not in metadata
+            if storedMetadata.raceDate == nil {
+                Task {
+                    do {
+                        let racePlanResponse = try await Supa.client
+                            .from("race_plans")
+                            .select("race_date")
+                            .eq("id", value: plan.id.uuidString)
+                            .single()
+                            .execute()
+                        
+                        if let json = try? JSONSerialization.jsonObject(with: racePlanResponse.data, options: []) as? [String: Any],
+                           let raceDateString = json["race_date"] as? String {
+                            let formatter = ISO8601DateFormatter()
+                            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                            if let raceDate = formatter.date(from: raceDateString) {
+                                await MainActor.run {
+                                    storedMetadata.raceDate = raceDate
+                                    raceMetadata = storedMetadata
+                                    print("✅ Loaded race_date from database: \(raceDateString)")
+                                }
+                                // Also save to local store for offline access
+                                RacePlanMetadataStore.save(storedMetadata, for: plan.id)
+                            }
+                        }
+                    } catch {
+                        print("⚠️ Could not load race_date from database: \(error)")
+                    }
+                }
+            }
+            
+            raceMetadata = storedMetadata
+            print("✅ Loaded race metadata: date=\(storedMetadata.raceDate?.description ?? "nil")")
         }
         
         do {
@@ -2995,22 +3066,36 @@ struct RacePlanView: View {
             // Update title in Supabase
             try await SupabaseService.updateRacePlanTitle(racePlanId: racePlanId, title: editingRaceName)
             
-            // Update metadata (including date)
+            // Update race date in Supabase database
+            try await SupabaseService.updateRacePlanDate(racePlanId: racePlanId, raceDate: editingRaceDate)
+            
+            // Update metadata (including date) - keep for local cache/offline support
             var updatedMetadata = raceMetadata ?? RacePlanMetadata(raceDate: nil, startTime: nil, elevationGain: nil, distance: nil, notes: nil)
             updatedMetadata.raceDate = editingRaceDate
             RacePlanMetadataStore.save(updatedMetadata, for: racePlanId)
             
-            // Update local state
+            // Update local state immediately to show the change
             await MainActor.run {
                 raceMetadata = updatedMetadata
+                print("✅ Updated raceMetadata in state: date=\(updatedMetadata.raceDate?.description ?? "nil")")
+                
                 if var updatedRace = selectedRace {
                     // Create a new RacePlanSummary with updated title
-                    selectedRace = RacePlanSummary(
+                    let updatedRaceSummary = RacePlanSummary(
                         id: updatedRace.id,
                         title: editingRaceName,
                         createdAt: updatedRace.createdAt,
                         updatedAt: Date()
                     )
+                    selectedRace = updatedRaceSummary
+                }
+            }
+            
+            // Reload race details to ensure everything is in sync (but don't wait for it)
+            // The metadata is already updated above, so the view should refresh immediately
+            Task {
+                if let userId = await resolveUserId(), let updatedRace = await MainActor.run(body: { selectedRace }) {
+                    await selectRace(updatedRace)
                 }
             }
             
@@ -3295,7 +3380,13 @@ struct RacePlanView: View {
     
     @MainActor
     private func applyCachedDetail(_ detail: CachedRacePlanDetail, skipRecalculation: Bool = false) {
-        raceMetadata = detail.metadata
+        // Always use the latest metadata from store if available, otherwise use cached
+        if let racePlanId = racePlanId,
+           let latestMetadata = RacePlanMetadataStore.load(for: racePlanId) {
+            raceMetadata = latestMetadata
+        } else {
+            raceMetadata = detail.metadata
+        }
         aidStations = detail.aidStations
         pacingSegments = detail.pacingSegments
         fuelingStations = detail.fuelingStations
@@ -3427,29 +3518,16 @@ struct RacePlanView: View {
             let durationString: String
             
             if let baseP = basePace {
-                // Ultra distance adjustment: For races longer than 50km, apply pace adjustment
-                // This accounts for the fact that ultra pace is slower than training pace
-                let ultraDistanceMultiplier: Double
-                if totalDistanceKm >= 100 {
-                    // 100km+ races: 30% slower than training pace
-                    ultraDistanceMultiplier = 1.30
-                } else if totalDistanceKm >= 80 {
-                    // 80-100km races: 25% slower
-                    ultraDistanceMultiplier = 1.25
-                } else if totalDistanceKm >= 50 {
-                    // 50-80km races: 20% slower
-                    ultraDistanceMultiplier = 1.20
-                } else {
-                    // Shorter races: no adjustment (use training pace)
-                    ultraDistanceMultiplier = 1.0
-                }
-                
                 let heatMultiplier = 1 + 0.01 * max(0, temperature - 15.0)
                 let fatigueMultiplier = 1 + analytics.fatigueRatePerHour * cumulativeHours
-                // Hill penalty should be per km, not total for segment
-                // 0.5 min per 100m of elevation gain, distributed across segment distance
+                
+                // Hill penalty calculation per km
+                // Formula: 0.5 * (elevationGainM / segmentDistance / 100.0)
+                // Example: 567m over 12km = 0.5 * (567 / 12 / 100) = 0.24 min/km = 14 sec/km
+                // Example: 814m over 18km = 0.5 * (814 / 18 / 100) = 0.45 min/km = 27 sec/km
                 let hillPenaltyPerKm = segmentDistance > 0 ? 0.5 * (metric.elevationGainM / segmentDistance / 100.0) : 0
-                let adjustedPace = max(3.0, baseP * ultraDistanceMultiplier * heatMultiplier * fatigueMultiplier + hillPenaltyPerKm)
+                
+                let adjustedPace = max(3.0, baseP * heatMultiplier * fatigueMultiplier + hillPenaltyPerKm)
                 let sectionMinutes = adjustedPace * segmentDistance
                 sectionHours = sectionMinutes / 60.0
                 cumulativeHours += sectionHours

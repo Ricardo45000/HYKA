@@ -33,7 +33,7 @@ serve(async (req) => {
 
       if (error) {
         console.error("❌ Strava OAuth error:", error)
-        const appRedirectURL = `com.hyka.app://?error=${encodeURIComponent(error)}&state=${encodeURIComponent(state || '')}`
+        const appRedirectURL = `app.hyka.com://?error=${encodeURIComponent(error)}&state=${encodeURIComponent(state || '')}`
         return new Response(null, {
           status: 302,
           headers: {
@@ -45,7 +45,7 @@ serve(async (req) => {
 
       if (!code) {
         console.error("❌ Missing 'code' parameter in GET request")
-        const appRedirectURL = `com.hyka.app://?error=${encodeURIComponent("Missing authorization code")}&state=${encodeURIComponent(state || '')}`
+        const appRedirectURL = `app.hyka.com://?error=${encodeURIComponent("Missing authorization code")}&state=${encodeURIComponent(state || '')}`
         return new Response(null, {
           status: 302,
           headers: {
@@ -56,7 +56,7 @@ serve(async (req) => {
       }
 
       console.log("🌐 Received GET request from Strava OAuth. Redirecting to app...")
-      const appRedirectURL = `com.hyka.app://?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state || '')}`
+      const appRedirectURL = `app.hyka.com://?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state || '')}`
 
       return new Response(null, {
         status: 302,

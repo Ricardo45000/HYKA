@@ -228,7 +228,7 @@ final class DeviceOAuthManager: ObservableObject {
             
             let session = ASWebAuthenticationSession(
                 url: authURL,
-                callbackURLScheme: "com.hyka.app" // Must match the scheme in redirectURI
+                callbackURLScheme: "app.hyka.com" // Must match the scheme in redirectURI
             ) { callbackURL, error in
                 if let error = error {
                     // Check if it's a Cloudflare-related error
@@ -260,7 +260,7 @@ final class DeviceOAuthManager: ObservableObject {
             
             print("🌐 Starting OAuth session...")
             print("   URL: \(authURL.absoluteString)")
-            print("   Callback scheme: com.hyka.app")
+            print("   Callback scheme: app.hyka.com")
             print("   Ephemeral session: true")
             
             if !session.start() {
@@ -523,7 +523,7 @@ final class DeviceOAuthManager: ObservableObject {
         return try await withCheckedThrowingContinuation { continuation in
             let authSession = ASWebAuthenticationSession(
                 url: authURL,
-                callbackURLScheme: "com.hyka.app"  // Intercept callback
+                callbackURLScheme: "app.hyka.com"  // Intercept callback
             ) { callbackURL, error in
                 if let error = error {
                     continuation.resume(throwing: error)
@@ -537,7 +537,7 @@ final class DeviceOAuthManager: ObservableObject {
                 
                 print("🔗 Garmin OAuth callback received: \(callbackURL.absoluteString)")
                 
-                // Parse OAuth 1.0a callback (format: com.hyka.app://garmin/callback?oauth_token=xxx&oauth_verifier=yyy)
+                // Parse OAuth 1.0a callback (format: app.hyka.com://garmin/callback?oauth_token=xxx&oauth_verifier=yyy)
                 guard let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
                       let queryItems = components.queryItems else {
                     continuation.resume(throwing: DeviceOAuthError.invalidCallback)
@@ -752,7 +752,7 @@ final class DeviceOAuthManager: ObservableObject {
         let callbackURL = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
             let authSession = ASWebAuthenticationSession(
                 url: authURL,
-                callbackURLScheme: "com.hyka.app"
+                callbackURLScheme: "app.hyka.com"
             ) { callbackURL, error in
                 if let error = error {
                     continuation.resume(throwing: error)
@@ -883,7 +883,7 @@ final class DeviceOAuthManager: ObservableObject {
         // When using web redirect, Suunto redirects to web URL, edge function redirects to app
         let callbackURL = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
             // Always use app scheme for callback (edge function redirects to this)
-            let callbackScheme = "com.hyka.app"
+            let callbackScheme = "app.hyka.com"
             
             let authSession = ASWebAuthenticationSession(
                 url: authURL,
@@ -1017,7 +1017,7 @@ final class DeviceOAuthManager: ObservableObject {
         print("🔐 Strava Authorization URL: \(authURL.absoluteString)")
         print("   Redirect URI: \(redirectURI)")
         print("   ⚠️ IMPORTANT: Check Strava settings:")
-        print("      - Authorization Callback Domain MUST be: com.hyka.app")
+        print("      - Authorization Callback Domain MUST be: app.hyka.com")
         print("      - Make sure you clicked 'Save' in Strava")
         print("      - Wait 1-2 minutes after saving for changes to take effect")
         
@@ -1037,7 +1037,7 @@ final class DeviceOAuthManager: ObservableObject {
         // So we still use the app scheme for the callback
         let callbackURL = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
             // Always use app scheme for callback (edge function redirects to this)
-            let callbackScheme = "com.hyka.app"
+            let callbackScheme = "app.hyka.com"
             
             let authSession = ASWebAuthenticationSession(
                 url: authURL,

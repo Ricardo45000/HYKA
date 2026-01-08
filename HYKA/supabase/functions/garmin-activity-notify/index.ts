@@ -9,7 +9,7 @@ import { create, getNumericDate } from "https://deno.land/x/djwt@v2.8/mod.ts"
 // APNs configuration
 const APNS_KEY_ID = Deno.env.get('APNS_KEY_ID')
 const APNS_TEAM_ID = Deno.env.get('APNS_TEAM_ID')
-const APNS_BUNDLE_ID = Deno.env.get('APNS_BUNDLE_ID') || 'com.hyka.app' // Updated to match bundle ID
+const APNS_BUNDLE_ID = Deno.env.get('APNS_BUNDLE_ID') || 'app.hyka.com' // Updated to match bundle ID
 const APNS_ENVIRONMENT = Deno.env.get('APNS_ENVIRONMENT') || 'production' 
 
 // APNs endpoints
@@ -140,6 +140,23 @@ async function sendAPNsNotification(
       if (response.status === 410) {
         console.log(`ℹ️ Device token ${deviceToken.substring(0, 8)}... is no longer valid (uninstalled)`)
         // Ideally remove from database here
+      } else if (response.status === 400 && errorData.reason === 'DeviceTokenNotForTopic') {
+        console.error(`❌ DeviceTokenNotForTopic - Device token was registered with a different bundle ID:`)
+        console.error(`   Current bundle ID: ${APNS_BUNDLE_ID}`)
+        console.error(`   Device token: ${deviceToken.substring(0, 8)}...`)
+        console.error(`   Fix: This token was registered with the old bundle ID. Delete it and re-register:`)
+        console.error(`   1. Delete old tokens: DELETE FROM user_devices WHERE device_token = '${deviceToken}';`)
+        console.error(`   2. User opens app → new token auto-registers with bundle ID ${APNS_BUNDLE_ID}`)
+        // Mark token for deletion (we'll remove it from database)
+        try {
+          await supabase
+            .from('user_devices')
+            .delete()
+            .eq('device_token', deviceToken)
+          console.log(`   ✅ Removed invalid device token from database`)
+        } catch (e) {
+          console.error(`   ⚠️ Could not remove token from database: ${e.message}`)
+        }
       } else if (response.status === 400 && errorData.reason === 'BadDeviceToken') {
         console.error(`❌ BadDeviceToken - Possible causes:`)
         console.error(`   1. Device token is invalid or expired`)

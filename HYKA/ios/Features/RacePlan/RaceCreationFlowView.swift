@@ -164,6 +164,9 @@ struct RaceCreationFlowView: View {
                 // 3. Update race plan title
                 try await SupabaseService.updateRacePlanTitle(racePlanId: createdRacePlanId, title: raceDetails.name)
                 
+                // 3b. Save race date to database
+                try await SupabaseService.updateRacePlanDate(racePlanId: createdRacePlanId, raceDate: raceDetails.date)
+                
                 // 4. Fetch track points and build metrics
                 let trackPoints = try await SupabaseService.fetchRacePlanTrackPoints(racePlanId: createdRacePlanId)
                 let metrics = buildSegmentMetrics(for: orderedStations, using: trackPoints)

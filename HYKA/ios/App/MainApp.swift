@@ -166,8 +166,8 @@ struct HYKAApp: App {
         print("   Host: \(host)")
         print("   Path: \(path)")
         
-        // Check for custom scheme (com.hyka.app://) or Universal Link (https://hyka.app)
-        let isCustomScheme = scheme == "com.hyka.app"
+        // Check for custom scheme (app.hyka.com://) or Universal Link (https://hyka.app)
+        let isCustomScheme = scheme == "app.hyka.com"
         let isUniversalLink = scheme == "https" && host == "hyka.app" && path.hasPrefix("/garmin/callback")
         
         if isCustomScheme || isUniversalLink {
@@ -179,7 +179,7 @@ struct HYKAApp: App {
                 isCallback = path.hasPrefix("/garmin/callback")
                 print("   ✅ Universal Link detected: \(isCallback ? "MATCH" : "NO MATCH")")
             } else {
-                // Custom scheme: com.hyka.app://callback or com.hyka.app://garmin/callback or com.hyka.app://polar/callback
+                // Custom scheme: app.hyka.com://callback or app.hyka.com://garmin/callback or app.hyka.com://polar/callback
                 isCallback = host == "callback" || 
                             host == "garmin" ||
                             host == "polar" ||
@@ -208,7 +208,7 @@ struct HYKAApp: App {
             }
         } else {
             print("⚠️  URL opened but doesn't match OAuth callback pattern")
-            print("   Expected: com.hyka.app:// or https://hyka.app/garmin/callback")
+            print("   Expected: app.hyka.com:// or https://hyka.app/garmin/callback")
             print("   Got: \(scheme)://\(host)\(path)")
             print("   Full URL: \(url.absoluteString)")
         }

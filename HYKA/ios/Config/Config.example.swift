@@ -35,7 +35,7 @@ enum Config {
     static let garminClientID = "YOUR_GARMIN_CLIENT_ID_HERE"
     
     /// Garmin OAuth 2.0 Redirect URI
-    static let garminRedirectURI = "com.hyka.app://callback"
+    static let garminRedirectURI = "app.hyka.com://callback"
     
     // MARK: - Weather API Configuration
     

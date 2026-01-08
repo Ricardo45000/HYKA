@@ -48,7 +48,7 @@ serve(async (req) => {
       if (error) {
         console.error("❌ Suunto OAuth error:", error)
         // Redirect to app with error
-        const appRedirectURL = `com.hyka.app://?error=${encodeURIComponent(error)}`
+        const appRedirectURL = `app.hyka.com://?error=${encodeURIComponent(error)}`
         return new Response(null, {
           status: 302,
           headers: {
@@ -60,7 +60,7 @@ serve(async (req) => {
       
       if (!code) {
         console.error("❌ No code in GET request")
-        const appRedirectURL = `com.hyka.app://?error=no_code`
+        const appRedirectURL = `app.hyka.com://?error=no_code`
         return new Response(null, {
           status: 302,
           headers: {
@@ -75,7 +75,7 @@ serve(async (req) => {
       console.log("   State:", state)
       
       // Redirect to app with code - app will handle token exchange
-      const appRedirectURL = `com.hyka.app://?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state || 'suunto_oauth')}`
+      const appRedirectURL = `app.hyka.com://?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state || 'suunto_oauth')}`
       console.log("🌐 Redirecting to app:", appRedirectURL)
       
       return new Response(null, {

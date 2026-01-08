@@ -619,6 +619,21 @@ final class SupabaseService {
         print("✅ Race plan title updated for \(racePlanId.uuidString)")
     }
     
+    static func updateRacePlanDate(racePlanId: UUID, raceDate: Date) async throws {
+        let timestampFormatter = ISO8601DateFormatter()
+        timestampFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let updatePayload = RacePlanDateUpdate(
+            raceDate: timestampFormatter.string(from: raceDate),
+            updatedAt: timestampFormatter.string(from: Date())
+        )
+        try await Supa.client
+            .from("race_plans")
+            .update(updatePayload)
+            .eq("id", value: racePlanId.uuidString)
+            .execute()
+        print("✅ Race plan date updated for \(racePlanId.uuidString): \(timestampFormatter.string(from: raceDate))")
+    }
+    
     static func makeTrackPoints(from rawPoints: [GPXTrackPoint]) -> [TrackPoint] {
         var trackPoints: [TrackPoint] = []
         var cumulativeDistance: Double = 0
@@ -3178,6 +3193,16 @@ struct RacePlanTitleUpdate: Codable {
     
     enum CodingKeys: String, CodingKey {
         case title
+        case updatedAt = "updated_at"
+    }
+}
+
+struct RacePlanDateUpdate: Codable {
+    let raceDate: String
+    let updatedAt: String
+    
+    enum CodingKeys: String, CodingKey {
+        case raceDate = "race_date"
         case updatedAt = "updated_at"
     }
 }
