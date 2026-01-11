@@ -163,11 +163,31 @@ struct AuthView: View {
                         
                         // Social login buttons
                         VStack(spacing: HYKATheme.spacingM) {
-                        Button {
-                            Task {
-                                await handleGoogleSignIn()
+                            Button {
+                                Task {
+                                    await handleAppleSignIn()
+                                }
+                            } label: {
+                                HStack {
+                                    Image(systemName: "apple.logo")
+                                        .font(.system(size: 20))
+                                    
+                                    Text("Continue with Apple")
+                                        .font(HYKATheme.button)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 48)
+                                .background(Color.black)
+                                .foregroundColor(.white)
+                                .cornerRadius(HYKATheme.cornerRadiusM)
                             }
-                        } label: {
+                            .disabled(isLoading)
+
+                            Button {
+                                Task {
+                                    await handleGoogleSignIn()
+                                }
+                            } label: {
                                 HStack {
                                     GoogleLogo(size: 20)
                                     
@@ -389,6 +409,22 @@ struct AuthView: View {
         
         // DO NOT set isLoading = false here - keep it true to prevent modal dismissal
         // It will be set to false when OAuth completes or errors
+    }
+
+    private func handleAppleSignIn() async {
+        isLoading = true
+        showError = false
+        
+        do {
+            try await session.signInWithApple()
+            print("🔄 Apple OAuth flow initiated...")
+            print("⏳ Keeping modal open to receive deep link callback...")
+        } catch {
+            errorMessage = "Failed to initiate Apple sign in. Please try again."
+            showError = true
+            isLoading = false
+            ErrorManager.shared.showError(error, title: "Apple Sign In Failed")
+        }
     }
 }
 

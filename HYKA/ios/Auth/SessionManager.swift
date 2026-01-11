@@ -494,13 +494,11 @@ final class SessionManager: NSObject, ObservableObject {
     }
     
     func signInWithApple() async throws {
-        do {
-            try await Supa.client.auth.signInWithOAuth(provider: .apple)
-            print("✅ Apple OAuth initiated")
-        } catch {
-            print("❌ Apple OAuth error: \(error)")
-            throw error
-        }
+        let redirectURL = URL(string: "app.hyka.com://callback")!
+        try await performOAuthWithASWebAuthenticationSession(
+            provider: "apple",
+            redirectURL: redirectURL
+        )
     }
     
     // Handle OAuth callback from deep link

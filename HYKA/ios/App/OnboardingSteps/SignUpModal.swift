@@ -117,6 +117,26 @@ struct SignUpModal: View {
                         VStack(spacing: HYKATheme.spacingM) {
                             Button {
                                 Task {
+                                    await handleAppleSignUp()
+                                }
+                            } label: {
+                                HStack {
+                                    Image(systemName: "apple.logo")
+                                        .font(.system(size: 20))
+                                    
+                                    Text("Continue with Apple")
+                                        .font(HYKATheme.button)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 48)
+                                .background(Color.black)
+                                .foregroundColor(.white)
+                                .cornerRadius(HYKATheme.cornerRadiusM)
+                            }
+                            .disabled(isLoading)
+
+                            Button {
+                                Task {
                                     await handleGoogleSignUp()
                                 }
                             } label: {
@@ -413,6 +433,19 @@ struct SignUpModal: View {
             print("🔄 Facebook OAuth flow initiated...")
         } catch {
             ErrorManager.shared.showError(error, title: "Facebook Sign In Failed")
+        }
+        
+        isLoading = false
+    }
+
+    private func handleAppleSignUp() async {
+        isLoading = true
+        
+        do {
+            try await session.signInWithApple()
+            print("🔄 Apple OAuth flow initiated...")
+        } catch {
+            ErrorManager.shared.showError(error, title: "Apple Sign In Failed")
         }
         
         isLoading = false
