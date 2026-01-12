@@ -10,6 +10,17 @@ final class ErrorManager: ObservableObject {
     
     @Published var currentError: AppError?
     @Published var showError = false
+    @Published var currentInfo: AppError?
+    @Published var showInfo = false
+    @Published var isOverlayActive = false // Track if overlay is currently being displayed
+    
+    // Track recently shown notifications to prevent duplicates
+    private var lastInfoNotification: (title: String, message: String, timestamp: Date)?
+    private let duplicatePreventionWindow: TimeInterval = 2.0 // 2 seconds
+    
+    // Track pending notifications to prevent race conditions
+    private var pendingNotificationId: UUID? = nil
+    private var notificationLock = NSLock()
     
     private init() {}
     
@@ -42,6 +53,12 @@ final class ErrorManager: ObservableObject {
     
     /// Show a custom error message
     func showError(title: String, message: String) {
+        // Prevent duplicate notifications - check if same message is already showing
+        if let current = currentError, current.title == title && current.message == message {
+            print("ℹ️ Ignoring duplicate error notification: \(title)")
+            return
+        }
+        
         currentError = AppError(title: title, message: message, underlyingError: nil)
         showError = true
         
@@ -49,10 +66,89 @@ final class ErrorManager: ObservableObject {
         print("   Message: \(message)")
     }
     
+    /// Show an info notification (not an error)
+    func showInfo(title: String, message: String) {
+        // Use lock to ensure atomic check-and-set operation (even though @MainActor, this adds extra safety)
+        notificationLock.lock()
+        defer { notificationLock.unlock() }
+        
+        // Debug: Log where this is being called from
+        let callStack = Thread.callStackSymbols.prefix(3).joined(separator: " -> ")
+        print("🔍 showInfo called: \(title)")
+        print("   Call stack: \(callStack)")
+        print("   Current showInfo state: \(showInfo)")
+        print("   Current isOverlayActive: \(isOverlayActive)")
+        
+        // Create a unique ID for this notification attempt
+        let notificationId = UUID()
+        
+        // Prevent duplicate notifications - multiple checks (in order of importance):
+        // 1. Check if we're already showing any info notification (most important check first)
+        if showInfo {
+            // If it's the same notification, definitely ignore
+            if let current = currentInfo, current.title == title && current.message == message {
+                print("ℹ️ Ignoring duplicate info notification (already showing): \(title)")
+                return
+            }
+            // If it's a different notification, also ignore to prevent stacking
+            print("ℹ️ Ignoring duplicate info notification (another info already showing): \(title)")
+            return
+        }
+        
+        // 2. Check if overlay is already active (additional safeguard)
+        if isOverlayActive {
+            print("ℹ️ Ignoring duplicate info notification (overlay already active): \(title)")
+            return
+        }
+        
+        // 3. Check if there's a pending notification (race condition protection)
+        if pendingNotificationId != nil {
+            print("ℹ️ Ignoring duplicate info notification (pending notification exists): \(title)")
+            return
+        }
+        
+        // 4. Check if the same notification was shown very recently (within 2 seconds)
+        if let last = lastInfoNotification,
+           last.title == title && last.message == message,
+           Date().timeIntervalSince(last.timestamp) < duplicatePreventionWindow {
+            let timeSince = Date().timeIntervalSince(last.timestamp)
+            print("ℹ️ Ignoring duplicate info notification (shown \(String(format: "%.2f", timeSince))s ago): \(title)")
+            return
+        }
+        
+        // Mark this notification as pending BEFORE setting showInfo (prevents race conditions)
+        pendingNotificationId = notificationId
+        
+        // Store this notification as the last shown BEFORE setting showInfo
+        lastInfoNotification = (title: title, message: message, timestamp: Date())
+        
+        // Set the notification atomically - set all flags together
+        currentInfo = AppError(title: title, message: message, underlyingError: nil)
+        showInfo = true
+        isOverlayActive = true // Mark overlay as active
+        
+        print("ℹ️ Info displayed to user: \(title)")
+        print("   Message: \(message)")
+        print("   Notification ID: \(notificationId)")
+    }
+    
     /// Dismiss the current error
     func dismissError() {
         currentError = nil
         showError = false
+        isOverlayActive = false
+    }
+    
+    /// Dismiss the current info notification
+    func dismissInfo() {
+        notificationLock.lock()
+        defer { notificationLock.unlock() }
+        
+        currentInfo = nil
+        showInfo = false
+        isOverlayActive = false
+        pendingNotificationId = nil // Clear pending notification
+        // Don't clear lastInfoNotification - we want to keep it for duplicate prevention
     }
     
     /// Handle errors from async operations
@@ -143,25 +239,39 @@ struct AppError: Identifiable {
     }
 }
 
-/// View modifier to display errors globally
+/// View modifier to display errors and info notifications globally
+/// Note: This should only be applied at the root level (MainApp/ContentView) to avoid duplicate overlays
 struct ErrorDisplayModifier: ViewModifier {
     @StateObject private var errorManager = ErrorManager.shared
     
     func body(content: Content) -> some View {
         content
             .overlay(
-                // Error toast/banner
-                VStack {
-                    if errorManager.showError, let error = errorManager.currentError {
-                        HYKAErrorToast(error: error) {
-                            errorManager.dismissError()
+                // Error and info toast/banner
+                // Only render if there's actually something to show
+                Group {
+                    if (errorManager.showError && errorManager.currentError != nil) ||
+                       (errorManager.showInfo && errorManager.currentInfo != nil) {
+                        VStack {
+                            if errorManager.showError, let error = errorManager.currentError {
+                                HYKAErrorToast(error: error, isError: true) {
+                                    errorManager.dismissError()
+                                }
+                                .transition(.move(edge: .top).combined(with: .opacity))
+                                .zIndex(1000)
+                            } else if errorManager.showInfo, let info = errorManager.currentInfo {
+                                HYKAErrorToast(error: info, isError: false) {
+                                    errorManager.dismissInfo()
+                                }
+                                .transition(.move(edge: .top).combined(with: .opacity))
+                                .zIndex(1000)
+                            }
+                            Spacer()
                         }
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                        .zIndex(1000)
+                        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: errorManager.showError)
+                        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: errorManager.showInfo)
                     }
-                    Spacer()
                 }
-                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: errorManager.showError)
             )
     }
 }
@@ -173,19 +283,20 @@ extension View {
     }
 }
 
-/// Error toast component
+/// Error/Info toast component
 struct HYKAErrorToast: View {
     let error: AppError
+    let isError: Bool
     let onDismiss: () -> Void
     
     @State private var dismissTimer: Timer?
     
     var body: some View {
         HStack(alignment: .top, spacing: HYKATheme.spacingM) {
-            // Error icon
-            Image(systemName: "exclamationmark.triangle.fill")
+            // Icon - error or info
+            Image(systemName: isError ? "exclamationmark.triangle.fill" : "info.circle.fill")
                 .font(.system(size: 20))
-                .foregroundColor(HYKATheme.Light.destructive)
+                .foregroundColor(isError ? HYKATheme.Light.destructive : Color.hykaPurple)
             
             // Error content
             VStack(alignment: .leading, spacing: 4) {

@@ -57,6 +57,15 @@ struct OnboardingFlowView: View {
                                 onGPXImported: { fileName, fileData, distance in
                                     gpxFileName = fileName
                                     gpxFileData = fileData
+                                    // Update raceDetails.distance with GPX distance for validation
+                                    raceDetails = RaceDetails(
+                                        name: raceDetails.name,
+                                        date: raceDetails.date,
+                                        startTime: raceDetails.startTime,
+                                        distance: distance, // Use GPX distance
+                                        elevation: raceDetails.elevation,
+                                        difficulty: raceDetails.difficulty
+                                    )
                                     updateFinishDistance(distance)
                                     isUploadingGPX = false
                                 },
@@ -108,9 +117,9 @@ struct OnboardingFlowView: View {
             .animation(.spring(response: 0.4, dampingFraction: 0.85, blendDuration: 0), value: currentStep)
             .animation(.easeInOut(duration: 0.35), value: showStrategyResults)
             .animation(.easeInOut(duration: 0.25), value: isSavingData)
-            .withErrorDisplay()
+            // Note: ErrorDisplay is applied at root level (MainApp), not here to avoid duplicate overlays
+            .keyboardDoneToolbar() // Apply to ZStack (NavigationView's direct content) to ensure only one toolbar
         }
-        .keyboardDoneToolbar()
         .onAppear {
             // Pre-fill user profile from OAuth data if available
             if let oauthInfo = session.oauthUserInfo {
@@ -161,18 +170,23 @@ struct OnboardingFlowView: View {
     private func updateFinishDistance(_ distanceKm: Double) {
         guard distanceKm > 0 else { return }
         var updatedStations = aidStations
+        
+        // Only auto-add Start/Finish if user hasn't added any stations yet
+        // If user has already added stations, only update existing Finish station distance, don't add new ones
         if updatedStations.isEmpty {
+            // User hasn't added any stations - add default Start and Finish
             updatedStations = [
                 AidStation(name: "Start", distance: 0, services: []),
                 AidStation(name: "Finish", distance: distanceKm, services: [])
             ]
         } else {
+            // User has already added stations - only update Finish distance if it exists
+            // Don't add new Start/Finish stations to avoid duplicates
             if let finishIndex = updatedStations.lastIndex(where: { $0.name.lowercased() == "finish" }) {
                 let finish = updatedStations[finishIndex]
                 updatedStations[finishIndex] = AidStation(name: finish.name, distance: distanceKm, services: finish.services)
-            } else {
-                updatedStations.append(AidStation(name: "Finish", distance: distanceKm, services: []))
             }
+            // If no Finish station exists and user has stations, don't auto-add one - let user add it manually
         }
         aidStations = updatedStations.sorted { $0.distance < $1.distance }
     }
@@ -194,7 +208,7 @@ struct OnboardingFlowView: View {
             }
             
             guard let userId = userId else {
-                print("❌ No user ID available - isAuthenticated: \(session.isAuthenticated), currentUser: \(session.currentUser?.id ?? nil)")
+                print("❌ No user ID available - isAuthenticated: \(session.isAuthenticated), currentUser: \(String(describing: session.currentUser?.id))")
                 ErrorManager.shared.showError(title: "Authentication Required", message: "User not authenticated. Please sign in again.")
                 return
             }
@@ -213,9 +227,13 @@ struct OnboardingFlowView: View {
                     preferences: strategyPreferences
                 )
                 
+                // 2b. Save race date to database (same as RaceCreationFlowView)
+                try await SupabaseService.updateRacePlanDate(racePlanId: racePlanId, raceDate: raceDetails.date)
+                print("✅ Race date saved to database: \(raceDetails.date)")
+                
                 // 3. Save GPX file if one was uploaded
                 if let fileName = gpxFileName, let fileData = gpxFileData {
-                    try await SupabaseService.saveGPXFile(
+                    _ = try await SupabaseService.saveGPXFile(
                         userId: userId,
                         racePlanId: racePlanId,
                         fileName: fileName,

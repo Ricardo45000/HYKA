@@ -20,7 +20,7 @@ struct RaceLiveActivityView: View {
                     gpxUploadSection
                     Spacer()
                 }
-                .frame(minHeight: UIScreen.main.bounds.height - 100)
+                .frame(minHeight: 800) // Replaced deprecated UIScreen.main.bounds.height with a sensible minimum height
             }
             .scrollDismissesKeyboard(.interactively)
             .ignoresSafeArea(edges: .horizontal)

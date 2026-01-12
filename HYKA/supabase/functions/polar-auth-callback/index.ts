@@ -44,7 +44,7 @@ serve(async (req) => {
       
       if (error) {
         console.error("❌ Polar OAuth error:", error)
-        const appRedirectURL = `app.hyka.com://?error=${encodeURIComponent(error)}`
+        const appRedirectURL = `app.hyka.com://callback?error=${encodeURIComponent(error)}`
         return new Response(null, {
           status: 302,
           headers: { 'Location': appRedirectURL, 'Access-Control-Allow-Origin': '*' }
@@ -53,7 +53,7 @@ serve(async (req) => {
       
       if (!code) {
         console.error("❌ No code in GET request")
-        const appRedirectURL = `app.hyka.com://?error=no_code`
+        const appRedirectURL = `app.hyka.com://callback?error=no_code`
         return new Response(null, {
           status: 302,
           headers: { 'Location': appRedirectURL, 'Access-Control-Allow-Origin': '*' }
@@ -63,7 +63,7 @@ serve(async (req) => {
       console.log("✅ Received code from Polar redirect")
       
       // Redirect to app with code
-      const appRedirectURL = `app.hyka.com://?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state || 'polar_oauth')}`
+      const appRedirectURL = `app.hyka.com://callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state || 'polar_oauth')}`
       console.log("🌐 Redirecting to app:", appRedirectURL)
       
       return new Response(null, {

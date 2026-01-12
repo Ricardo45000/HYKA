@@ -109,13 +109,13 @@ struct FITParser {
             
             let localMessageType = header & 0x0F
             let isDefinition = (header & 0x40) != 0
-            let timeOffset = (header & 0x20) != 0
+            let _ = (header & 0x20) != 0
             
             if isDefinition {
                 // Parse definition message
                 guard offset + 5 < data.count else { break }
                 
-                let reserved = data[offset]
+                let _ = data[offset]
                 offset += 1
                 let architecture = data[offset]
                 offset += 1

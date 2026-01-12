@@ -88,30 +88,22 @@ final class SessionManager: NSObject, ObservableObject {
                     if isOffline {
                         print("📦 Offline mode: Using cached session data without SDK restoration")
                         
-                        // Parse session data to get user info
-                        if let sessionDict = try? JSONSerialization.jsonObject(with: sessionData) as? [String: Any],
-                           let email = sessionDict["user"] as? [String: Any]? ?? sessionDict["email"] as? String ?? UserDefaults.standard.string(forKey: "hyka.user.email") {
-                            
-                            // Create a minimal User object from cached data
-                            // We'll use the stored user ID and email
-                            // Note: This is a workaround for offline mode
-                            print("✅ Restored user from cache: \(userIdString)")
-                            
-                            // Set authentication state from cache
-                            isAuthenticated = true
-                            hasCompletedOnboarding = UserDefaults.standard.bool(forKey: onboardingKey)
-                            
-                            // Try to create a User object - we'll need to check what fields are available
-                            // For now, we'll set isAuthenticated and let the app work with cached data
-                            print("✅ User authenticated via cached session (offline mode)")
-                            print("   - isAuthenticated: \(isAuthenticated)")
-                            print("   - hasCompletedOnboarding: \(hasCompletedOnboarding)")
-                            print("   - Note: Some features may be limited while offline")
-                        } else {
-                            print("⚠️ Failed to parse cached session data")
-                            isAuthenticated = true // Still authenticated, just can't parse full data
-                            hasCompletedOnboarding = UserDefaults.standard.bool(forKey: onboardingKey)
+                        // Parse session data to get user info (suppress unused warning)
+                        if let sessionDict = try? JSONSerialization.jsonObject(with: sessionData) as? [String: Any] {
+                            _ = sessionDict["user"] as? [String: Any] ?? (sessionDict["email"] as? String as Any?)
                         }
+                        
+                        // Create a minimal User object from cached data
+                        print("✅ Restored user from cache: \(userIdString)")
+                        
+                        // Set authentication state from cache
+                        isAuthenticated = true
+                        hasCompletedOnboarding = UserDefaults.standard.bool(forKey: onboardingKey)
+                        
+                        print("✅ User authenticated via cached session (offline mode)")
+                        print("   - isAuthenticated: \(isAuthenticated)")
+                        print("   - hasCompletedOnboarding: \(hasCompletedOnboarding)")
+                        print("   - Note: Some features may be limited while offline")
                     } else {
                         // Online - try to restore session to SDK
                         print("🔄 Restoring session to Supabase SDK...")
@@ -122,7 +114,6 @@ final class SessionManager: NSObject, ObservableObject {
                                let refreshToken = sessionDict["refresh_token"] as? String {
                                 
                                 // Use the Supabase Swift SDK's setSession method directly
-                                // Reference: https://supabase.com/docs/reference/swift/auth-setsession
                                 try await Supa.client.auth.setSession(accessToken: accessToken, refreshToken: refreshToken)
                                 print("✅ Successfully restored session to Supabase SDK using setSession method")
                                 
@@ -148,7 +139,7 @@ final class SessionManager: NSObject, ObservableObject {
                             hasCompletedOnboarding = hasCompleted
                             UserDefaults.standard.set(hasCompleted, forKey: onboardingKey)
                             
-                            // Sync user ID to UserDefaults for push notifications (redundant here but safe)
+                            // Sync user ID to UserDefaults for push notifications
                             UserDefaults.standard.set(userId.uuidString, forKey: "hyka.user.id")
                             
                             // Register device token
@@ -160,14 +151,8 @@ final class SessionManager: NSObject, ObservableObject {
                             
                             print("✅ Onboarding status loaded from Supabase: \(hasCompleted)")
                         } catch {
-                            print("⚠️ Failed to load onboarding status from Supabase")
-                            print("   Error: \(error)")
-                            if let postgrestError = error as? PostgrestError {
-                                print("   PostgrestError code: \(postgrestError.code ?? "nil")")
-                                print("   PostgrestError message: \(postgrestError.message)")
-                            }
+                            print("⚠️ Failed to load onboarding status from Supabase: \(error)")
                             print("   Using UserDefaults value: \(hasCompletedOnboarding)")
-                            print("   (This is normal for new users who haven't completed onboarding yet)")
                         }
                         
                         print("✅ checkSession() - User authenticated via UserDefaults fallback")
@@ -513,7 +498,6 @@ final class SessionManager: NSObject, ObservableObject {
         print("   Query: \(url.query ?? "nil")")
         print("   Current isAuthenticated: \(isAuthenticated)")
         print("   Current isLoading: \(isLoading)")
-        print("   Thread: \(Thread.isMainThread ? "MAIN" : "BACKGROUND")")
         print("═══════════════════════════════════════")
         print("")
         
@@ -637,26 +621,8 @@ final class SessionManager: NSObject, ObservableObject {
                 
                 print("🔄 Setting session directly from access token...")
                 
-                // Manually set the session using Supabase's storage
-                // The SDK doesn't expose a direct setSession method, so we'll use the storage
-                let sessionData: [String: Any] = [
-                    "access_token": accessToken,
-                    "refresh_token": refreshToken,
-                    "expires_at": Double(params["expires_at"] ?? "0") ?? 0,
-                    "expires_in": Double(params["expires_in"] ?? "3600") ?? 3600,
-                    "token_type": params["token_type"] ?? "bearer",
-                    "user": [
-                        "id": userId,
-                        "email": json["email"] as? String ?? "",
-                        "app_metadata": json["app_metadata"] as? [String: Any] ?? [:],
-                        "user_metadata": json["user_metadata"] as? [String: Any] ?? [:]
-                    ]
-                ]
-                
-                // Store session in Supabase's local storage
-                // We'll need to use the auth client's storage directly
-                // For now, let's try using the modified URL which might work if Supabase SDK is flexible
-                // But actually, let's try a different approach - use the Supabase REST API to validate and set the session
+                // CRITICAL: Set the session in Supabase SDK so auth.uid() works in RLS policies
+                // The SDK needs the session to include JWT token in API requests
                 
                 // Try the modified URL approach - Supabase might accept it
                 do {
@@ -784,7 +750,7 @@ final class SessionManager: NSObject, ObservableObject {
                             URLQueryItem(name: "refresh_token", value: newRefreshToken)
                         ]
                         
-                        guard let sessionURL = sessionComponents.url else {
+                        guard sessionComponents.url != nil else {
                             throw OAuthError.invalidURL
                         }
                         
@@ -839,7 +805,7 @@ final class SessionManager: NSObject, ObservableObject {
                                 URLQueryItem(name: "expires_in", value: "\(expiresIn)")
                             ]
                             
-                            guard let sessionURL = callbackURL.url else {
+                            guard callbackURL.url != nil else {
                                 throw OAuthError.invalidURL
                             }
                             
@@ -1025,7 +991,7 @@ final class SessionManager: NSObject, ObservableObject {
                                         print("   isAuthenticated: \(isAuthenticated)")
                                         print("   hasCompletedOnboarding: \(hasCompletedOnboarding)")
                                         print("   isLoading: \(isLoading)")
-                                        print("   currentUser: \(currentUser?.id ?? nil)")
+                                        print("   currentUser: \(String(describing: currentUser?.id))")
                                         print("   User ID from UserDefaults: \(userIdString)")
                                         print("═══════════════════════════════════════")
                                         print("")
@@ -1187,7 +1153,7 @@ final class SessionManager: NSObject, ObservableObject {
                 print("🔄 Updating SessionManager state...")
                 
                 // Extract OAuth user info (name, gender) from user metadata
-                let userMetadata = session.user.userMetadata ?? [:]
+                let userMetadata = session.user.userMetadata
                 let extractedOAuthInfo = OAuthUserInfo.from(userMetadata: userMetadata)
                 
                 await MainActor.run {
@@ -1316,7 +1282,7 @@ extension SessionManager {
         guard let data = Data(base64Encoded: base64),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let userIdString = json["sub"] as? String,
-              let userId = UUID(uuidString: userIdString) else {
+              UUID(uuidString: userIdString) != nil else {
             throw OAuthError.invalidURL
         }
         

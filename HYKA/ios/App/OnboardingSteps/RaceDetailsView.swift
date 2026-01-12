@@ -104,7 +104,7 @@ struct RaceDetailsView: View {
                 }
             }
             .scrollDismissesKeyboard(.interactively)
-            .keyboardDoneToolbar()
+            // Note: keyboardDoneToolbar is applied at parent level (OnboardingFlowView) to avoid duplicate "Done" buttons
         }
         .alert("Sign Out", isPresented: $showSignOutAlert) {
             Button("Cancel", role: .cancel) { }

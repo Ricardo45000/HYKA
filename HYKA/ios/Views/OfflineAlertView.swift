@@ -76,7 +76,7 @@ struct OfflineAlertModifier: ViewModifier {
                     }
                 }
             }
-            .onChange(of: networkMonitor.isConnected) { isConnected in
+            .onChange(of: networkMonitor.isConnected) { _, isConnected in
                 if !isConnected {
                     // Show offline banner immediately
                     showBanner = true

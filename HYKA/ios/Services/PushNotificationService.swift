@@ -118,7 +118,7 @@ final class PushNotificationService: NSObject, ObservableObject {
     func handleNotification(_ notification: UNNotification) {
         let userInfo = notification.request.content.userInfo
         
-        if let activityId = userInfo["activity_id"] as? String,
+        if userInfo["activity_id"] as? String != nil,
            let deepLink = userInfo["deep_link"] as? String {
             print("🔗 Opening deep link: \(deepLink)")
             
@@ -141,8 +141,6 @@ final class PushNotificationService: NSObject, ObservableObject {
                     print("✅ Badge count reset to 0")
                 }
             }
-            // Fallback for immediate UI update
-            UIApplication.shared.applicationIconBadgeNumber = 0
         }
     }
 }

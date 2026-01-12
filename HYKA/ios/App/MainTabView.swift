@@ -18,11 +18,11 @@ struct MainTabView: View {
                 }
                 .tag(1)
         }
-        .keyboardDoneToolbar()
+        // Note: keyboardDoneToolbar is applied at root level (MainApp) to avoid duplicate "Done" buttons
         .onAppear {
             configureTabBar()
         }
-        .onChange(of: selectedTab) { _ in
+        .onChange(of: selectedTab) { _, _ in
             configureTabBar()
         }
     }

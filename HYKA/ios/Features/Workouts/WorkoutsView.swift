@@ -326,14 +326,14 @@ struct WearableConnectionsView: View {
                 connectedDevices.insert(deviceName)
                 print("✅ Successfully connected to \(deviceName)")
             } catch {
-                if case DeviceOAuthError.notImplemented(let message) = error {
-                    errorMessage = "\(deviceName) connection not yet available. \(message)"
-                } else {
-                    errorMessage = "Failed to connect to \(deviceName): \(error.localizedDescription)"
-                }
-                showErrorAlert = true
                 print("❌ Error connecting to \(deviceName): \(error)")
-                ErrorManager.shared.showError(error, title: "Connection Failed")
+                // Show error via ErrorManager (centralized error handling)
+                // Don't show local alert to avoid duplicate notifications
+                if case DeviceOAuthError.notImplemented(let message) = error {
+                    ErrorManager.shared.showError(title: "Connection Not Available", message: "\(deviceName) connection not yet available. \(message)")
+                } else {
+                    ErrorManager.shared.showError(error, title: "Connection Failed")
+                }
             }
             
             isLoading = false

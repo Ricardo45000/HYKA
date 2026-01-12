@@ -7,7 +7,7 @@ import PostgREST
 
 // MARK: - Supporting Models
 
-struct PacingSegment: Identifiable, Codable {
+struct PacingSegment: Identifiable, Codable, Sendable {
     let id: UUID
     let from: String
     let to: String
@@ -49,14 +49,14 @@ struct PacingSegment: Identifiable, Codable {
         }
     }
     
-    enum EffortLevel: String, Codable {
+    enum EffortLevel: String, Codable, Sendable {
         case conservative
         case build
         case moderate
         case hard
     }
     
-    enum EffortBar: String, Codable {
+    enum EffortBar: String, Codable, Sendable {
         case green
         case orange
         case grey
@@ -71,7 +71,7 @@ struct PacingSegment: Identifiable, Codable {
     }
 }
 
-struct FuelingStation: Codable {
+struct FuelingStation: Codable, Sendable {
     let name: String
     let time: String
     let elapsed: String
@@ -82,6 +82,35 @@ struct FuelingStation: Codable {
     let hydrationNote: String
 }
 
+struct WeatherData: Codable, Sendable {
+    let temperature: String
+    let conditions: String
+    let wind: String
+    let humidity: String
+}
+
+struct WeatherCoordinates: Codable, Equatable, Sendable {
+    let latitude: Double
+    let longitude: Double
+}
+
+struct AidStationSegmentMetrics: Codable, Sendable {
+    let segmentDistanceM: Double
+    let elevationGainM: Double
+    let elevationLossM: Double
+    let estimatedTimeSeconds: Double
+    let averageHeartRate: Double?
+    let targetHeartRate: Double? // Calculated target HR based on physiological maxHR and race fraction
+}
+
+struct RacePlanMetadata: Codable, Sendable {
+    var raceDate: Date?
+    var startTime: Date?
+    var elevationGain: Int?
+    var distance: Double?
+    var notes: String?
+}
+
 struct AthleteAnalytics: Equatable {
     let averageHeartRate: Double?
     let maxHeartRate: Double?
@@ -89,13 +118,6 @@ struct AthleteAnalytics: Equatable {
     let fatigueRatePerHour: Double
     let caloriesPerHour: Double
     let weightKg: Double?
-}
-
-struct WeatherData: Codable {
-    let temperature: String
-    let conditions: String
-    let wind: String
-    let humidity: String
 }
 
 private struct SectionPlan {
@@ -184,7 +206,7 @@ struct RacePlanView: View {
             await loadRacePlans()
             await fetchConnectedProvider()
         }
-        .onChange(of: athleteAnalytics) { _ in
+        .onChange(of: athleteAnalytics) { _, _ in
             // When analytics change (new workout data), recalculate metrics and strategy
             Task { @MainActor in
                 if !trackPoints.isEmpty && !aidStations.isEmpty {
@@ -804,7 +826,7 @@ struct RacePlanView: View {
             .padding(.horizontal, HYKATheme.spacingXXL)
         }
         .padding(.top, HYKATheme.spacingL)
-            .onChange(of: weatherData?.temperature) { _ in
+            .onChange(of: weatherData?.temperature) { _, _ in
                 Task { @MainActor in
                     recalculateStrategy()
                 }
@@ -2957,39 +2979,16 @@ struct RacePlanView: View {
     // MARK: - Save Aid Stations
     
     private func saveAidStations() async {
-        // Get user ID from session
-        guard let userId = session.currentUser?.id else {
-            print("⚠️ Cannot save aid stations: No user ID")
+        // These conditions are guaranteed by the UI - user must be authenticated and race plan must be selected
+        // to access the edit aid stations modal
+        guard let userId = session.currentUser?.id,
+              let finalRacePlanId = racePlanId else {
+            // This should never happen in normal flow, but handle gracefully if it does
+            print("⚠️ Unexpected state: Cannot save aid stations - missing user ID or race plan ID")
             return
         }
         
         do {
-            var finalRacePlanId: UUID
-            if let existingRacePlanId = racePlanId {
-                finalRacePlanId = existingRacePlanId
-            } else {
-                print("ℹ️ No race plan found, creating a new one...")
-                let raceDetails = RaceDetails(
-                    name: "My Race Plan",
-                    date: Date(),
-                    startTime: Calendar.current.date(from: DateComponents(hour: 6, minute: 0)) ?? Date(),
-                    distance: 100.0,
-                    elevation: 0,
-                    difficulty: "Medium"
-                )
-                let preferences = StrategyPreferences(
-                    raceGoals: [.finish],
-                    nutritionPreferences: [.mix]
-                )
-                finalRacePlanId = try await SupabaseService.saveRacePlan(
-                    userId: userId,
-                    raceDetails: raceDetails,
-                    aidStations: aidStations,
-                    preferences: preferences
-                )
-                racePlanId = finalRacePlanId
-                print("✅ Created new race plan: \(finalRacePlanId.uuidString)")
-            }
             
             var currentTrackPoints = trackPoints
             if currentTrackPoints.isEmpty {
@@ -3079,7 +3078,7 @@ struct RacePlanView: View {
                 raceMetadata = updatedMetadata
                 print("✅ Updated raceMetadata in state: date=\(updatedMetadata.raceDate?.description ?? "nil")")
                 
-                if var updatedRace = selectedRace {
+                if let updatedRace = selectedRace {
                     // Create a new RacePlanSummary with updated title
                     let updatedRaceSummary = RacePlanSummary(
                         id: updatedRace.id,
@@ -3094,7 +3093,7 @@ struct RacePlanView: View {
             // Reload race details to ensure everything is in sync (but don't wait for it)
             // The metadata is already updated above, so the view should refresh immediately
             Task {
-                if let userId = await resolveUserId(), let updatedRace = await MainActor.run(body: { selectedRace }) {
+                if await resolveUserId() != nil, let updatedRace = await MainActor.run(body: { selectedRace }) {
                     await selectRace(updatedRace)
                 }
             }
@@ -4080,13 +4079,11 @@ struct RacePlanView: View {
                         print("ℹ️ \(note)")
                     }
                     
-                    // Show success message to user
+                    // Show info message to user (not error)
                     await MainActor.run {
-                        ErrorManager.shared.showError(
-                            NSError(domain: "HYKA", code: 0, userInfo: [
-                                NSLocalizedDescriptionKey: "✅ Sync requested! \(chunksRequested) date ranges will be processed. Activities will arrive via webhooks over the next few minutes to hours."
-                            ]),
-                            title: "Sync Started"
+                        ErrorManager.shared.showInfo(
+                            title: "Sync Started",
+                            message: "Sync requested! \(chunksRequested) date ranges will be processed. Activities will arrive via webhooks over the next few minutes to hours."
                         )
                     }
                 } else {
@@ -4128,7 +4125,7 @@ struct RacePlanView: View {
         )
         
         // Render the view to PDF using UIGraphicsPDFRenderer
-        let pdfData = await renderViewToPDF(strategyCardView)
+        let pdfData = renderViewToPDF(strategyCardView)
         
         guard let pdfData = pdfData else {
             await MainActor.run {
@@ -4171,7 +4168,16 @@ struct RacePlanView: View {
         hostingController.view.frame = CGRect(origin: .zero, size: CGSize(width: pageWidth, height: 10000))
         
         // Add to a window to ensure proper layout
-        let window = UIWindow(frame: CGRect(origin: .zero, size: CGSize(width: pageWidth, height: 10000)))
+        let window: UIWindow
+        if let windowScene = UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene {
+            window = UIWindow(windowScene: windowScene)
+        } else if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
+            window = UIWindow(windowScene: windowScene)
+        } else {
+            // Fallback for cases where no window scene is available (unlikely in modern iOS)
+            return nil
+        }
+        window.frame = CGRect(origin: .zero, size: CGSize(width: pageWidth, height: 10000))
         window.rootViewController = hostingController
         window.isHidden = false
         
@@ -4742,47 +4748,6 @@ private enum RacePlanMetadataStore {
     }
 }
 
-struct WeatherCoordinates: Codable, Equatable {
-    let latitude: Double
-    let longitude: Double
-}
-
-fileprivate struct CachedRacePlanDetail: Codable {
-    let metadata: RacePlanMetadata
-    let aidStations: [AidStation]
-    let pacingSegments: [PacingSegment]
-    let fuelingStations: [FuelingStation]
-    let trackPoints: [TrackPoint]
-    let aidStationMetricsStringKeys: [String: AidStationSegmentMetrics] // For Codable encoding
-    let weatherLocation: String
-    let weatherCoordinates: WeatherCoordinates?
-    let weatherData: WeatherData?
-    let lastUpdated: Date
-    
-    // Helper to convert from [Int: ...] to [String: ...]
-    init(metadata: RacePlanMetadata, aidStations: [AidStation], pacingSegments: [PacingSegment], fuelingStations: [FuelingStation], trackPoints: [TrackPoint], aidStationMetrics: [Int: AidStationSegmentMetrics], weatherLocation: String, weatherCoordinates: WeatherCoordinates?, weatherData: WeatherData?, lastUpdated: Date) {
-        self.metadata = metadata
-        self.aidStations = aidStations
-        self.pacingSegments = pacingSegments
-        self.fuelingStations = fuelingStations
-        self.trackPoints = trackPoints
-        self.aidStationMetricsStringKeys = Dictionary(uniqueKeysWithValues: aidStationMetrics.map { (String($0.key), $0.value) })
-        self.weatherLocation = weatherLocation
-        self.weatherCoordinates = weatherCoordinates
-        self.weatherData = weatherData
-        self.lastUpdated = lastUpdated
-    }
-    
-    // Helper to convert back to [Int: ...]
-    var aidStationMetrics: [Int: AidStationSegmentMetrics] {
-        Dictionary(uniqueKeysWithValues: aidStationMetricsStringKeys.compactMap { key, value in
-            guard let intKey = Int(key) else { return nil }
-            return (intKey, value)
-        })
-    }
-}
-
-
 // MARK: - Race Strategy Card PDF View
 
 struct RaceStrategyCardPDFView: View {
@@ -5147,6 +5112,41 @@ struct ShareSheet: UIViewControllerRepresentable {
 }
 
 
+struct CachedRacePlanDetail: Codable, Sendable {
+    let metadata: RacePlanMetadata
+    let aidStations: [AidStation]
+    let pacingSegments: [PacingSegment]
+    let fuelingStations: [FuelingStation]
+    let trackPoints: [TrackPoint]
+    let aidStationMetricsStringKeys: [String: AidStationSegmentMetrics] // For Codable encoding
+    let weatherLocation: String
+    let weatherCoordinates: WeatherCoordinates?
+    let weatherData: WeatherData?
+    let lastUpdated: Date
+    
+    // Helper to convert from [Int: ...] to [String: ...]
+    init(metadata: RacePlanMetadata, aidStations: [AidStation], pacingSegments: [PacingSegment], fuelingStations: [FuelingStation], trackPoints: [TrackPoint], aidStationMetrics: [Int: AidStationSegmentMetrics], weatherLocation: String, weatherCoordinates: WeatherCoordinates?, weatherData: WeatherData?, lastUpdated: Date) {
+        self.metadata = metadata
+        self.aidStations = aidStations
+        self.pacingSegments = pacingSegments
+        self.fuelingStations = fuelingStations
+        self.trackPoints = trackPoints
+        self.aidStationMetricsStringKeys = Dictionary(uniqueKeysWithValues: aidStationMetrics.map { (String($0.key), $0.value) })
+        self.weatherLocation = weatherLocation
+        self.weatherCoordinates = weatherCoordinates
+        self.weatherData = weatherData
+        self.lastUpdated = lastUpdated
+    }
+    
+    // Helper to convert back to [Int: ...]
+    var aidStationMetrics: [Int: AidStationSegmentMetrics] {
+        Dictionary(uniqueKeysWithValues: aidStationMetricsStringKeys.compactMap { key, value in
+            guard let intKey = Int(key) else { return nil }
+            return (intKey, value)
+        })
+    }
+}
+
 actor RacePlanListCache {
     static let shared = RacePlanListCache()
     private var storage: [UUID: [RacePlanSummary]] = [:]
@@ -5165,8 +5165,10 @@ actor RacePlanDetailCache {
     private var storage: [UUID: CachedRacePlanDetail] = [:]
     
     init() {
-        // Load from UserDefaults on init
-        loadFromUserDefaults()
+        // Load from UserDefaults on init - using a Task since init is synchronous but loadFromUserDefaults is actor-isolated
+        Task {
+            await loadFromUserDefaults()
+        }
     }
     
     private func storageKey(for racePlanId: UUID) -> String {
@@ -5193,7 +5195,7 @@ actor RacePlanDetailCache {
         }
     }
     
-    fileprivate func detail(for racePlanId: UUID) -> CachedRacePlanDetail? {
+    func detail(for racePlanId: UUID) -> CachedRacePlanDetail? {
         // First check in-memory cache
         if let cached = storage[racePlanId] {
             return cached
@@ -5209,7 +5211,7 @@ actor RacePlanDetailCache {
         return detail
     }
     
-    fileprivate func save(detail: CachedRacePlanDetail, for racePlanId: UUID) {
+    func save(detail: CachedRacePlanDetail, for racePlanId: UUID) {
         // Save to in-memory cache
         storage[racePlanId] = detail
         
@@ -5224,7 +5226,7 @@ actor RacePlanDetailCache {
         }
     }
     
-    fileprivate func remove(for racePlanId: UUID) {
+    func remove(for racePlanId: UUID) {
         // Remove from in-memory cache
         storage[racePlanId] = nil
         
@@ -5233,3 +5235,5 @@ actor RacePlanDetailCache {
         UserDefaults.standard.removeObject(forKey: key)
     }
 }
+
+

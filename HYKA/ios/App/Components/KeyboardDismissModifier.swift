@@ -177,6 +177,7 @@ private struct KeyboardDismissInstaller: UIViewRepresentable {
 // MARK: - Keyboard Toolbar
 // Note: Global keyboard dismiss has been removed to prevent RTI errors.
 // Use scrollDismissesKeyboard(.interactively) on ScrollViews instead.
+// IMPORTANT: Apply this modifier INSIDE NavigationView contexts, not outside, to avoid duplicate toolbars.
 extension View {
     func keyboardDoneToolbar() -> some View {
         self.toolbar {

@@ -26,33 +26,31 @@ final class NetworkMonitor: ObservableObject {
     }
     
     private func startMonitoring() {
-        monitor.pathUpdateHandler = { [weak self] path in
+        monitor.pathUpdateHandler = { path in
             Task { @MainActor in
-                guard let self = self else { return }
-                
-                let wasConnected = self.isConnected
-                self.isConnected = path.status == .satisfied
+                let wasConnected = NetworkMonitor.shared.isConnected
+                NetworkMonitor.shared.isConnected = path.status == .satisfied
                 
                 // Determine connection type
                 if path.status == .satisfied {
                     if path.usesInterfaceType(.wifi) {
-                        self.connectionType = .wifi
+                        NetworkMonitor.shared.connectionType = .wifi
                     } else if path.usesInterfaceType(.cellular) {
-                        self.connectionType = .cellular
+                        NetworkMonitor.shared.connectionType = .cellular
                     } else                     if path.usesInterfaceType(.wiredEthernet) {
-                        self.connectionType = .ethernet
+                        NetworkMonitor.shared.connectionType = .ethernet
                     } else {
-                        self.connectionType = .unknown
+                        NetworkMonitor.shared.connectionType = .unknown
                     }
                 } else {
-                    self.connectionType = .none
+                    NetworkMonitor.shared.connectionType = .none
                 }
                 
                 // Log connection changes
-                if wasConnected != self.isConnected {
-                    print("🌐 Network status changed: \(self.isConnected ? "ONLINE" : "OFFLINE")")
-                    if self.isConnected {
-                        print("   Connection type: \(self.connectionType)")
+                if wasConnected != NetworkMonitor.shared.isConnected {
+                    print("🌐 Network status changed: \(NetworkMonitor.shared.isConnected ? "ONLINE" : "OFFLINE")")
+                    if NetworkMonitor.shared.isConnected {
+                        print("   Connection type: \(NetworkMonitor.shared.connectionType)")
                     }
                 }
             }

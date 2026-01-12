@@ -50,7 +50,7 @@ echo "   Required secrets:"
 echo "   - APNS_KEY_ID"
 echo "   - APNS_TEAM_ID"
 echo "   - APNS_KEY_CONTENT"
-echo "   - APNS_BUNDLE_ID (optional, defaults to com.hyka.app)"
+echo "   - APNS_BUNDLE_ID (optional, defaults to app.hyka.com)"
 echo ""
 
 # 4. Instructions

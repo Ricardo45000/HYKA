@@ -54,7 +54,7 @@ struct HYKAApp: App {
                 }
             }
             .preferredColorScheme(.dark)
-            .keyboardDoneToolbar()
+            // Note: keyboardDoneToolbar is applied inside NavigationView contexts (OnboardingFlowView) to avoid duplicate toolbars
             .onAppear {
                 print("")
                 print("═══════════════════════════════════════")

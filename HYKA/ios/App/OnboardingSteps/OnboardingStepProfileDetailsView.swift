@@ -143,7 +143,7 @@ struct OnboardingStepProfileDetailsView: View {
             .scrollDismissesKeyboard(.interactively)
         }
         .background(HYKATheme.Light.background)
-        .keyboardDoneToolbar()
+        // Note: keyboardDoneToolbar is applied at parent level (OnboardingFlowView) to avoid duplicate "Done" buttons
         .sheet(isPresented: $showDatePicker) {
             NavigationView {
                 DatePicker(

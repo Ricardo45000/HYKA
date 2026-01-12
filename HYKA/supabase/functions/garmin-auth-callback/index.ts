@@ -31,44 +31,53 @@ serve(async (req) => {
     }
 
     console.log(`🔄 Exchanging code for Garmin tokens (User: ${user_id})`)
+    console.log(`   Redirect URI: ${redirect_uri}`)
 
     // 1. Exchange Code for Tokens
-    // https://developerportal.garmin.com/connect-api/oauth-2-0
-    const tokenUrl = "https://connectapi.garmin.com/oauth-service/oauth/exchange/user/access_token"
+    // Following Garmin OAuth2.0 PKCE Specification meticulously:
+    // Reference: https://developerportal.garmin.com/sites/default/files/OAuth2PKCE_1.pdf
+    const tokenUrl = "https://diauth.garmin.com/di-oauth2-service/oauth/token"
     
-    const body = new URLSearchParams({
+    // Per specification, parameters must be in the body as application/x-www-form-urlencoded
+    const bodyParams = new URLSearchParams({
         grant_type: 'authorization_code',
-        code: code,
         client_id: clientId,
         client_secret: clientSecret,
-        redirect_uri: redirect_uri,
+        code: code,
+        code_verifier: code_verifier || '',
+        redirect_uri: redirect_uri
     })
 
-    if (code_verifier) {
-        body.append('code_verifier', code_verifier)
-    }
-
+    console.log(`   Attempting token exchange at specification endpoint: ${tokenUrl}`)
+    
     const tokenResponse = await fetch(tokenUrl, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/x-www-form-urlencoded'
         },
-        body: body
+        body: bodyParams.toString()
     })
 
     if (!tokenResponse.ok) {
         const errText = await tokenResponse.text()
-        console.error("❌ Token exchange failed:", errText)
-        return new Response(JSON.stringify({ error: "Token exchange failed", details: errText }), { status: 400 })
+        console.error("❌ Token exchange failed:")
+        console.error(`   Status: ${tokenResponse.status} ${tokenResponse.statusText}`)
+        console.error(`   Error details: ${errText}`)
+        return new Response(JSON.stringify({ 
+            error: "Token exchange failed", 
+            details: errText,
+            status: tokenResponse.status
+        }), { 
+            status: 400, 
+            headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } 
+        })
     }
 
     const tokens = await tokenResponse.json()
-    // tokens: { access_token, refresh_token, expires_in, scope, ... }
-
-    console.log("✅ Tokens received")
+    console.log("✅ Tokens received successfully")
 
     // 2. Fetch Garmin User ID
-    // We need this to map webhooks (which only send garmin_user_id) back to our user_id
+    // Per specification Page 5: GET https://apis.garmin.com/wellness-api/rest/user/id
     const userIdUrl = "https://apis.garmin.com/wellness-api/rest/user/id"
     const userResponse = await fetch(userIdUrl, {
         headers: {
@@ -83,7 +92,6 @@ serve(async (req) => {
         console.log("✅ Fetched Garmin User ID:", garminUserId)
     } else {
         console.warn("⚠️ Failed to fetch Garmin User ID:", await userResponse.text())
-        // Proceeding without garminUserId is risky for webhooks, but we can still save the tokens
     }
 
     // 3. Store in Supabase
@@ -97,8 +105,6 @@ serve(async (req) => {
         updated_at: new Date().toISOString()
     }
 
-    // Only update garmin_user_id if we successfully fetched it
-    // If it's already there, we don't want to null it out (if fetch failed)
     if (garminUserId) {
         Object.assign(connectionData, { garmin_user_id: garminUserId })
     }
@@ -116,12 +122,20 @@ serve(async (req) => {
 
     // 4. Return tokens to client
     return new Response(JSON.stringify(tokens), {
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+        }
     })
 
   } catch (error) {
     console.error("❌ Error:", error)
-    return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+    return new Response(JSON.stringify({ error: error.message }), { 
+        status: 500, 
+        headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+        } 
+    })
   }
 })
-

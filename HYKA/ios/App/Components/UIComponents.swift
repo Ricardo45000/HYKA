@@ -141,7 +141,7 @@ struct HYKAUIInput: View {
                     .autocorrectionDisabled()
                     .submitLabel(keyboardType == .emailAddress ? .next : .done)
                     // Custom modifier to ensure decimal pad works correctly
-                    .onChange(of: text) { newValue in
+                    .onChange(of: text) { _, newValue in
                         if keyboardType == .decimalPad || keyboardType == .numbersAndPunctuation {
                             // Allow only one decimal point and numbers
                             let filtered = newValue.filter { "0123456789.,".contains($0) }

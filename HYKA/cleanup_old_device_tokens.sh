@@ -4,8 +4,8 @@
 # Cleanup Old Device Tokens After Bundle ID Change
 # ============================================================================
 # This script helps delete old device tokens that were registered with
-# the old bundle ID (com.hyka.app) so they can be re-registered with
-# the new bundle ID (app.hyka.com)
+# a previous bundle ID so they can be re-registered with
+# the current bundle ID (app.hyka.com)
 # ============================================================================
 
 SUPABASE_URL="https://gvfhtiljkybbrbxoyqsq.supabase.co"

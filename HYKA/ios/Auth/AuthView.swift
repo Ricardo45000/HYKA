@@ -254,6 +254,7 @@ struct AuthView: View {
             .scrollDismissesKeyboard(.interactively)
             .background(HYKATheme.Light.background)
             .navigationBarTitleDisplayMode(.inline)
+            .keyboardDoneToolbar() // Apply INSIDE NavigationView to avoid duplicate toolbars
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {

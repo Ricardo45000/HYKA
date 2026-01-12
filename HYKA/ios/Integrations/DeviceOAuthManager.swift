@@ -15,6 +15,7 @@ final class DeviceOAuthManager: ObservableObject {
     @Published var errorMessage: String?
     
     private weak var session: SessionManager?
+    private var syncInProgress: Set<String> = [] // Track providers currently syncing to prevent duplicates
     
     init(session: SessionManager) {
         self.session = session
@@ -45,7 +46,7 @@ final class DeviceOAuthManager: ObservableObject {
         }
         
         guard let userId = userId else {
-            print("❌ No user ID available - isAuthenticated: \(session.isAuthenticated), currentUser: \(session.currentUser?.id ?? nil)")
+            print("❌ No user ID available - isAuthenticated: \(session.isAuthenticated), currentUser: \(String(describing: session.currentUser?.id))")
             throw DeviceOAuthError.notAuthenticated
         }
         
@@ -57,8 +58,6 @@ final class DeviceOAuthManager: ObservableObject {
             isConnecting = false
             connectingProvider = nil
         }
-        
-        var connectionSaved = false
         
         do {
             let (accessToken, refreshToken, tokenSecret, expiresAt) = try await performOAuth(for: provider, from: viewController)
@@ -76,37 +75,46 @@ final class DeviceOAuthManager: ObservableObject {
                     tokenSecret: tokenSecret,
                     expiresAt: expiresAt
                 )
-                connectionSaved = true
                 print("✅ OAuth connection saved for \(provider)")
             } else {
                 // Strava connection is already saved by strava-auth-callback Edge Function
-                connectionSaved = true
                 print("✅ Strava connection already saved by Edge Function")
             }
             
             // Trigger server-side historical backfill (30 days)
             // This happens automatically after user successfully connects and agrees to share data
+            // Only trigger once per connection to avoid duplicates
+            let providerKey = provider.lowercased()
+            
+            // Prevent duplicate sync triggers
+            guard !syncInProgress.contains(providerKey) else {
+                print("⚠️ Historical sync already in progress for \(provider), skipping duplicate trigger")
+                return
+            }
+            
+            syncInProgress.insert(providerKey)
+            defer {
+                syncInProgress.remove(providerKey)
+            }
+            
             do {
                 print("🔄 Triggering historical sync for \(provider) (last 30 days)...")
-                try await triggerHistoricalSync(userId: userId, provider: provider.lowercased())
-                print("✅ Historical sync requested successfully for \(provider)")
+                try await triggerHistoricalSync(userId: userId, provider: providerKey)
+                // Note: triggerHistoricalSync already prints success message, so we don't duplicate it here
                 
-                // Show specific alert for Garmin sync delay
-                if provider.lowercased() == "garmin" {
-                    await MainActor.run {
-                        ErrorManager.shared.showError(
-                            title: "Sync in Progress",
-                            message: "Garmin historical data sync has started. Your activities will appear in about 15 minutes."
-                        )
-                    }
+                // Show info notification (not error) for sync starting - only once
+                // Note: showInfo is @MainActor, so we can call it directly
+                if providerKey == "garmin" {
+                    ErrorManager.shared.showInfo(
+                        title: "Sync in Progress",
+                        message: "Garmin historical data sync has started. Your activities will appear in about 15 minutes."
+                    )
                 } else {
-                    // For other providers, show a brief success message
-                    await MainActor.run {
-                        ErrorManager.shared.showError(
-                            title: "Sync Started",
-                            message: "\(provider.capitalized) historical data sync has started. Your activities will appear shortly."
-                        )
-                    }
+                    // For other providers, show a brief info message
+                    ErrorManager.shared.showInfo(
+                        title: "Sync Started",
+                        message: "\(provider.capitalized) historical data sync has started. Your activities will appear shortly."
+                    )
                 }
             } catch {
                 print("❌ Error triggering historical sync for \(provider): \(error)")
@@ -138,16 +146,6 @@ final class DeviceOAuthManager: ObservableObject {
             }
             
         } catch {
-            // If connection was saved but an error occurred, clean it up
-            if connectionSaved {
-                do {
-                    try await SupabaseService.deleteOAuthConnection(userId: userId, provider: provider.lowercased())
-                    print("🧹 Cleaned up connection after error")
-                } catch {
-                    print("⚠️ Failed to clean up connection after error: \(error)")
-                }
-            }
-            
             errorMessage = error.localizedDescription
             print("❌ Error connecting to \(provider): \(error)")
             ErrorManager.shared.showError(error, title: "Connection Failed")
@@ -200,6 +198,27 @@ final class DeviceOAuthManager: ObservableObject {
         print("🔄 Garmin OAuth 2.0 with PKCE Flow")
         print("   Client ID: \(clientId.prefix(20))...")
         print("   Redirect URI: \(redirectURI)")
+        print("")
+        print("   ⚠️ CRITICAL: Redirect URI Mismatch Check")
+        print("   ==========================================")
+        print("   App is sending to Garmin: \(redirectURI)")
+        print("   Garmin Portal MUST have EXACTLY: \(redirectURI)")
+        print("")
+        if redirectURI != "app.hyka.com://callback" {
+            print("   ❌ WARNING: Redirect URI is NOT 'app.hyka.com://callback'")
+            print("   Current value: \(redirectURI)")
+            print("   This will cause 'Safari cannot open the page' error!")
+            print("   Fix: Update Config.swift to use 'app.hyka.com://callback'")
+            print("")
+        }
+        print("   Steps to fix 'Safari cannot open the page' error:")
+        print("   1. Go to: https://developer.garmin.com/my-apps/")
+        print("   2. Select your HYKA app → OAuth 2.0 settings")
+        print("   3. Set Redirect URI to EXACTLY: app.hyka.com://callback")
+        print("   4. Remove any other redirect URIs (especially https://hyka.app/garmin/callback)")
+        print("   5. Click Save and wait 1-2 minutes")
+        print("   6. Verify Config.swift has: static let garminRedirectURI = \"app.hyka.com://callback\"")
+        print("")
         
         // Generate PKCE code verifier and challenge
         let codeVerifier = generateCodeVerifier()
@@ -221,14 +240,19 @@ final class DeviceOAuthManager: ObservableObject {
         }
         
         print("🔗 Authorization URL: \(authURL.absoluteString.prefix(100))...")
+        print("   📋 Full authorization URL: \(authURL.absoluteString)")
         
         // Present authentication session
         let callbackURL = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
             let presentationContextProvider = AuthPresentationContextProvider(viewController: viewController)
             
+            // Use custom URL scheme for callback interception
+            // This must match the scheme in redirectURI (app.hyka.com://callback)
+            let callbackURLScheme = "app.hyka.com"
+            
             let session = ASWebAuthenticationSession(
                 url: authURL,
-                callbackURLScheme: "app.hyka.com" // Must match the scheme in redirectURI
+                callbackURLScheme: callbackURLScheme // Always use app.hyka.com to intercept the final redirect
             ) { callbackURL, error in
                 if let error = error {
                     // Check if it's a Cloudflare-related error
@@ -240,15 +264,53 @@ final class DeviceOAuthManager: ObservableObject {
                         continuation.resume(throwing: DeviceOAuthError.cloudflareBlocked)
                         return
                     }
+                    
+                    // Check for user cancellation
+                    if let nsError = error as NSError?,
+                       nsError.domain == ASWebAuthenticationSessionErrorDomain,
+                       nsError.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
+                        print("ℹ️ User cancelled Garmin OAuth flow")
+                        continuation.resume(throwing: DeviceOAuthError.cancelled)
+                        return
+                    }
+                    
+                    // Log detailed error information
+                    print("❌ Garmin OAuth error occurred:")
+                    print("   Error domain: \((error as NSError).domain)")
+                    print("   Error code: \((error as NSError).code)")
+                    print("   Error description: \(error.localizedDescription)")
+                    print("   Full error: \(error)")
+                    print("")
+                    print("   🔍 If you see 'Safari cannot open the page':")
+                    print("   This means the redirect URI doesn't match!")
+                    print("   - App sent: \(redirectURI)")
+                    print("   - Check Garmin Portal has EXACTLY: \(redirectURI)")
+                    print("   - Common mistake: Portal has 'https://hyka.app/garmin/callback'")
+                    print("   - Should be: 'app.hyka.com://callback'")
+                    
                     continuation.resume(throwing: error)
                     return
                 }
                 
                 guard let callbackURL = callbackURL else {
+                    print("❌ Garmin OAuth callback URL is nil")
+                    print("   This usually means:")
+                    print("   1. Redirect URI mismatch between app and Garmin Developer Portal")
+                    print("   2. The redirect URI in Garmin Portal must be EXACTLY: app.hyka.com://callback")
+                    print("   3. Check that the URL scheme 'app.hyka.com' is registered in Info.plist")
+                    print("   4. See GARMIN_OAUTH_REDIRECT_URI_FIX.md for detailed instructions")
+                    print("")
+                    print("   Debugging steps:")
+                    print("   - Verify in Garmin Developer Portal: https://developer.garmin.com/my-apps/")
+                    print("   - Check OAuth 2.0 settings → Redirect URI")
+                    print("   - Make sure it's exactly: app.hyka.com://callback")
+                    print("   - No trailing slashes, no typos")
+                    print("   - If you see 'Safari cannot open the page', the redirect URI doesn't match")
                     continuation.resume(throwing: DeviceOAuthError.invalidCallback)
                     return
                 }
                 
+                print("✅ Garmin OAuth callback received: \(callbackURL.absoluteString)")
                 continuation.resume(returning: callbackURL)
             }
             
@@ -271,6 +333,10 @@ final class DeviceOAuthManager: ObservableObject {
         
         print("✅ Received callback: \(callbackURL.absoluteString)")
         
+        // Handle both Universal Links (https://hyka.app/garmin/callback?code=...) 
+        // and custom schemes (app.hyka.com://garmin/callback?code=...)
+        // The Universal Link redirects to app.hyka.com://garmin/callback, so we need to handle both
+        
         // Extract authorization code
         guard let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false) else {
             print("❌ Failed to parse callback URL into components")
@@ -279,9 +345,25 @@ final class DeviceOAuthManager: ObservableObject {
         
         print("📋 Query items: \(components.queryItems?.map { "\($0.name)=\($0.value ?? "nil")" }.joined(separator: "&") ?? "none")")
         
-        guard let code = components.queryItems?.first(where: { $0.name == "code" })?.value else {
+        // Try to get code from query parameters
+        var code: String?
+        
+        // First, try direct query parameter
+        code = components.queryItems?.first(where: { $0.name == "code" })?.value
+        
+        // If not found, check if it's in the URL fragment (some OAuth flows use fragments)
+        if code == nil, let fragment = components.fragment, !fragment.isEmpty {
+            var fragmentComponents = URLComponents()
+            fragmentComponents.query = fragment
+            code = fragmentComponents.queryItems?.first(where: { $0.name == "code" })?.value
+        }
+        
+        guard let code = code else {
             print("❌ No 'code' parameter found in callback URL")
             print("   Available parameters: \(components.queryItems?.map { $0.name }.joined(separator: ", ") ?? "none")")
+            print("   URL scheme: \(callbackURL.scheme ?? "nil")")
+            print("   URL host: \(callbackURL.host ?? "nil")")
+            print("   URL path: \(callbackURL.path)")
             throw DeviceOAuthError.invalidCallback
         }
         
@@ -342,7 +424,25 @@ final class DeviceOAuthManager: ObservableObject {
         
         guard (200...299).contains(httpResponse.statusCode) else {
             let errorString = String(data: data, encoding: .utf8) ?? "Unknown error"
-            print("❌ Token exchange failed: \(errorString)")
+            print("❌ Token exchange failed:")
+            print("   Status: \(httpResponse.statusCode)")
+            print("   Error: \(errorString)")
+            print("   Redirect URI sent: \(redirectURI)")
+            print("")
+            print("   🔍 Common causes:")
+            print("   1. Redirect URI mismatch - must match authorization request exactly")
+            print("   2. Code already used (authorization codes are single-use)")
+            print("   3. Code expired (authorization codes expire quickly)")
+            print("   4. Code verifier mismatch (PKCE requirement)")
+            print("")
+            print("   Check Supabase Edge Function logs for detailed Garmin error response")
+            
+            // Try to parse error details if available
+            if let errorData = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let details = errorData["details"] as? String {
+                print("   Garmin error details: \(details)")
+            }
+            
             throw DeviceOAuthError.tokenExchangeFailed
         }
         
@@ -991,7 +1091,9 @@ final class DeviceOAuthManager: ObservableObject {
     private func performStravaOAuth(from viewController: UIViewController) async throws -> (accessToken: String, refreshToken: String?, expiresAt: Date?) {
         // Strava OAuth 2.0
         let stravaClientId = Config.stravaClientID
-        let redirectURI = Config.stravaRedirectURI
+        // ⚠️ CRITICAL: redirect_uri must be the Supabase Edge Function URL
+        // Strava redirects to this web URL, then the Edge Function redirects to the app
+        let redirectURI = Config.stravaAuthCallbackURL
         
         print("🔄 Strava OAuth 2.0 Flow")
         print("   Client ID: \(stravaClientId)")
@@ -1017,7 +1119,8 @@ final class DeviceOAuthManager: ObservableObject {
         print("🔐 Strava Authorization URL: \(authURL.absoluteString)")
         print("   Redirect URI: \(redirectURI)")
         print("   ⚠️ IMPORTANT: Check Strava settings:")
-        print("      - Authorization Callback Domain MUST be: app.hyka.com")
+        print("      - Authorization Callback Domain MUST be: gvfhtiljkybbrbxoyqsq.supabase.co")
+        print("      - OR the full redirect URI: \(redirectURI)")
         print("      - Make sure you clicked 'Save' in Strava")
         print("      - Wait 1-2 minutes after saving for changes to take effect")
         
@@ -1236,7 +1339,7 @@ final class DeviceOAuthManager: ObservableObject {
     private func triggerHistoricalSync(userId: UUID, provider: String) async throws {
         print("🔄 Triggering \(provider) historical backfill (last 30 days)...")
         
-        guard let session = session else {
+        guard session != nil else {
             throw DeviceOAuthError.notAuthenticated
         }
         
@@ -1279,7 +1382,9 @@ final class DeviceOAuthManager: ObservableObject {
         if (200...299).contains(httpResponse.statusCode) {
             if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let success = json["success"] as? Bool, success {
-                print("✅ Historical sync requested successfully for \(provider)")
+                // Use capitalized provider name for consistent logging
+                let providerName = provider.capitalized
+                print("✅ Historical sync requested successfully for \(providerName)")
                 if let message = json["message"] as? String {
                     print("   \(message)")
                 }
@@ -1324,6 +1429,7 @@ enum DeviceOAuthError: Error, LocalizedError {
     case notImplemented(String)
     case unknownProvider(String)
     case cloudflareBlocked
+    case cancelled
     
     var errorDescription: String? {
         switch self {
@@ -1333,6 +1439,8 @@ enum DeviceOAuthError: Error, LocalizedError {
             return "Invalid OAuth URL"
         case .invalidCallback:
             return "Invalid OAuth callback"
+        case .cancelled:
+            return "OAuth flow was cancelled by user"
         case .invalidResponse:
             return "Invalid OAuth response from server"
         case .requestTokenFailed:
@@ -1378,14 +1486,13 @@ final class AuthPresentationContextProvider: NSObject, ASWebAuthenticationPresen
             return UIWindow(windowScene: windowScene)
         }
         
-        // Final fallback - only for iOS 14 and below
-        // iOS 15+ should always have a window scene available
+        // Final fallback - only for legacy support
         if #available(iOS 15.0, *) {
             // iOS 15+ requires window scene - if we get here, something is wrong
             fatalError("Unable to create presentation anchor - no window scene available")
         } else {
-            // iOS 14 and below - use deprecated initializer as last resort
-            return UIWindow(frame: UIScreen.main.bounds)
+            // Use legacy method for older versions if needed
+            return UIWindow()
         }
     }
 }

@@ -22,24 +22,19 @@ final class WorkoutDataFetchingService {
         print("🔄 Fetching workouts for provider: \(provider)")
         
         // Determine the date to fetch from
-        let fetchAfter: Date?
         if let providedAfter = after {
-            fetchAfter = providedAfter
             print("📅 Using provided date: \(providedAfter)")
         } else if useIncrementalSync {
             // Try to get last sync timestamp from Supabase
             if let lastTimestamp = try? await SupabaseService.getLastWorkoutTimestamp(userId: userId, provider: provider) {
-                fetchAfter = lastTimestamp
                 print("📅 Incremental sync: Fetching activities after \(lastTimestamp)")
             } else {
                 // No previous workouts - fetch last 30 days
-                fetchAfter = Date().addingTimeInterval(-30 * 24 * 60 * 60)
                 print("📅 No previous workouts found - fetching last 30 days")
             }
         } else {
             // Full historical sync - fetch ALL activities (from 1 year ago to now)
             // This is used when user explicitly clicks "Sync with device" button
-            fetchAfter = Date().addingTimeInterval(-365 * 24 * 60 * 60) // 1 year ago
             print("📅 Full historical sync: Fetching ALL activities from the past year")
             print("   This may take longer but will get all historical activities")
         }
@@ -382,7 +377,7 @@ final class WorkoutDataFetchingService {
                 
                 for training in trainingData {
                     do {
-                        try await SupabaseService.saveTraining(
+                        _ = try await SupabaseService.saveTraining(
                             userId: userId,
                             provider: "coros",
                             trainingData: training
@@ -405,7 +400,7 @@ final class WorkoutDataFetchingService {
                 
                 for training in trainingData {
                     do {
-                        try await SupabaseService.saveTraining(
+                        _ = try await SupabaseService.saveTraining(
                             userId: userId,
                             provider: "suunto",
                             trainingData: training
@@ -428,7 +423,7 @@ final class WorkoutDataFetchingService {
                 
                 for training in trainingData {
                     do {
-                        try await SupabaseService.saveTraining(
+                        _ = try await SupabaseService.saveTraining(
                             userId: userId,
                             provider: "polar",
                             trainingData: training

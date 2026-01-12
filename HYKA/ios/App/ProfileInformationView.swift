@@ -289,7 +289,7 @@ struct ProfileInformationView: View {
             
             loadProfile()
         }
-        .withErrorDisplay()
+        // Note: ErrorDisplay is applied at root level (MainApp), not here to avoid duplicate overlays
         .alert("Success", isPresented: $showSuccess) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -328,7 +328,7 @@ struct ProfileInformationView: View {
     }
     
     private func savePassword() async {
-        guard let userId = session.currentUser?.id else {
+        guard session.currentUser?.id != nil else {
             await MainActor.run {
                 ErrorManager.shared.showError(title: "Authentication Required", message: "User not authenticated")
             }

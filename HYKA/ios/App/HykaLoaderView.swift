@@ -294,7 +294,7 @@ struct HLetter: View {
             path.addLine(to: CGPoint(x: rightX, y: topY + (bottomY - topY) * (1 - rightLineProgress)))
             
             // Horizontal bar (rotates out)
-            let barLength = letterWidth * 0.6
+            let _ = letterWidth * 0.6
             let rotationAngle = barRotation * .pi / 2
             let barStartX = leftX + (rightX - leftX) * 0.2
             let barEndX = rightX - (rightX - leftX) * 0.2

@@ -225,7 +225,7 @@ struct AidStationsView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .background(HYKATheme.backgroundColor)
-            .keyboardDoneToolbar()
+            // Note: keyboardDoneToolbar is applied at parent level (OnboardingFlowView) to avoid duplicate "Done" buttons
         }
         .alert("Invalid Distance", isPresented: $showDistanceError) {
             Button("OK", role: .cancel) { }
@@ -291,6 +291,7 @@ struct AidStationsView: View {
         guard !stationName.isEmpty, let distance = Double(stationDistance) else { return }
         
         // Validation: Check if distance is greater than race distance
+        // Allows distance <= maxDistance (including equality for finish line stations)
         if let maxDistance = raceDistance, distance > maxDistance {
             showDistanceError = true
             return

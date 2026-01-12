@@ -1,14 +1,6 @@
 import SwiftUI
 import Auth
 
-struct RacePlanMetadata: Codable {
-    var raceDate: Date?
-    var startTime: Date?
-    var elevationGain: Int?
-    var distance: Double?
-    var notes: String?
-}
-
 struct RaceCreationFlowView: View {
     enum Step: Int {
         case upload = 6
@@ -103,6 +95,7 @@ struct RaceCreationFlowView: View {
                 }
             }
             .navigationBarHidden(true)
+            .keyboardDoneToolbar() // Apply INSIDE NavigationView to avoid duplicate toolbars
             .alert("Missing GPX File", isPresented: $showValidationAlert) {
                 Button("OK", role: .cancel) {}
             } message: {

@@ -210,7 +210,7 @@ struct ConnectDevicesView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .background(HYKATheme.backgroundColor)
-            .withErrorDisplay()
+            // Note: ErrorDisplay is applied at root level (MainApp), not here to avoid duplicate overlays
         }
         .onAppear {
             // Update OAuth manager with current session

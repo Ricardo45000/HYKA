@@ -326,29 +326,29 @@ final class SuuntoAPIClient {
                        dailyData?["avgRestingHr"] as? Int
         
         // HR data might be in a nested structure
-        var hrData: [String: Any]? = dailyData?["hr"] as? [String: Any]
-        let avgHR = hrData?["avg"] as? Int ?? dailyData?["avgHr"] as? Int
-        let maxHR = hrData?["max"] as? Int ?? dailyData?["maxHr"] as? Int
-        let minHR = hrData?["min"] as? Int ?? dailyData?["minHr"] as? Int
+        let hrData: [String: Any]? = dailyData?["hr"] as? [String: Any]
+        let _ = hrData?["avg"] as? Int ?? dailyData?["avgHr"] as? Int
+        let _ = hrData?["max"] as? Int ?? dailyData?["maxHr"] as? Int
+        let _ = hrData?["min"] as? Int ?? dailyData?["minHr"] as? Int
         
         // Extract from sleep data
-        let sleepDuration = sleepData?["duration"] as? Int ?? sleepData?["sleepDuration"] as? Int
+        let _ = sleepData?["duration"] as? Int ?? sleepData?["sleepDuration"] as? Int
         let sleepScore = sleepData?["sleepScore"] as? Int ?? 
                         sleepData?["quality"] as? Int ??
                         sleepData?["sleepQuality"] as? Int
-        let deepSleep = sleepData?["deepSleep"] as? Int ?? sleepData?["deepSleepDuration"] as? Int
-        let lightSleep = sleepData?["lightSleep"] as? Int ?? sleepData?["lightSleepDuration"] as? Int
-        let remSleep = sleepData?["remSleep"] as? Int ?? sleepData?["remSleepDuration"] as? Int
-        let awake = sleepData?["awake"] as? Int ?? sleepData?["awakeDuration"] as? Int
+        let _ = sleepData?["deepSleep"] as? Int ?? sleepData?["deepSleepDuration"] as? Int
+        let _ = sleepData?["lightSleep"] as? Int ?? sleepData?["lightSleepDuration"] as? Int
+        let _ = sleepData?["remSleep"] as? Int ?? sleepData?["remSleepDuration"] as? Int
+        let _ = sleepData?["awake"] as? Int ?? sleepData?["awakeDuration"] as? Int
         
         // Extract from recovery data
         let recoveryScore = recoveryData?["recovery"] as? Int ?? 
                           recoveryData?["recoveryScore"] as? Int ??
                           recoveryData?["recoveryStatus"] as? Int
-        let recoveryTime = recoveryData?["recoveryTime"] as? Int ?? 
+        let _ = recoveryData?["recoveryTime"] as? Int ?? 
                           recoveryData?["timeToRecovery"] as? Int
-        let stress = recoveryData?["stress"] as? Int ?? recoveryData?["stressLevel"] as? Int
-        let bodyResources = recoveryData?["bodyResources"] as? Int ?? recoveryData?["resources"] as? Int
+        let _ = recoveryData?["stress"] as? Int ?? recoveryData?["stressLevel"] as? Int
+        let _ = recoveryData?["bodyResources"] as? Int ?? recoveryData?["resources"] as? Int
         
         // VO2 max might be in recovery or daily data
         let vo2MaxDouble = recoveryData?["vo2Max"] as? Double ?? 

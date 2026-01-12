@@ -470,7 +470,7 @@ final class SupabaseService {
             
             try await Supa.client.storage
                 .from("gpx-files")
-                .upload(path: storagePath, file: fileData, options: fileOptions)
+                .upload(storagePath, data: fileData, options: fileOptions)
             
             print("✅ GPX file uploaded to storage")
             
@@ -1484,56 +1484,242 @@ final class SupabaseService {
     }
     
     /// Fetch OAuth connections for a user
+    /// This queries both the unified oauth_connections table AND provider-specific tables
+    /// (strava_connections, garmin_connections, polar_connections, suunto_connections)
     static func fetchOAuthConnections(userId: UUID) async throws -> [OAuthConnection] {
-        let response = try await Supa.client
-            .from("oauth_connections")
-            .select()
-            .eq("user_id", value: userId.uuidString)
-            .execute()
-        
-        // Parse response data - response.data is always Data
-        var dataArray: [[String: Any]]?
-        
-        if let parsed = try? JSONSerialization.jsonObject(with: response.data, options: []) as? [[String: Any]] {
-            dataArray = parsed
-        } else if let parsed = try? JSONSerialization.jsonObject(with: response.data, options: []) as? [String: Any] {
-            // Handle single object response
-            dataArray = [parsed]
-        }
-        
-        guard let dataArray = dataArray else {
-            return []
-        }
-        
+        let userIdString = userId.uuidString
         let timestampFormatter = ISO8601DateFormatter()
         timestampFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         
-        return dataArray.compactMap { dict in
-            guard let provider = dict["provider"] as? String,
-                  let accessToken = dict["access_token"] as? String else {
-                return nil
+        var allConnections: [OAuthConnection] = []
+        
+        // 1. Query unified oauth_connections table (for Polar, Suunto, etc. that use this table)
+        do {
+            let response = try await Supa.client
+                .from("oauth_connections")
+                .select()
+                .eq("user_id", value: userIdString)
+                .execute()
+            
+            var dataArray: [[String: Any]]?
+            if let parsed = try? JSONSerialization.jsonObject(with: response.data, options: []) as? [[String: Any]] {
+                dataArray = parsed
+            } else if let parsed = try? JSONSerialization.jsonObject(with: response.data, options: []) as? [String: Any] {
+                dataArray = [parsed]
             }
             
-            let refreshToken = dict["refresh_token"] as? String
-            let expiresAtString = dict["expires_at"] as? String
-            let expiresAt = expiresAtString != nil ? timestampFormatter.date(from: expiresAtString!) : nil
-            
-            return OAuthConnection(
-                provider: provider,
-                accessToken: accessToken,
-                refreshToken: refreshToken,
-                expiresAt: expiresAt
-            )
+            if let dataArray = dataArray {
+                for dict in dataArray {
+                    guard let provider = dict["provider"] as? String,
+                          let accessToken = dict["access_token"] as? String else {
+                        continue
+                    }
+                    
+                    let refreshToken = dict["refresh_token"] as? String
+                    let expiresAtString = dict["expires_at"] as? String
+                    let expiresAt = expiresAtString != nil ? timestampFormatter.date(from: expiresAtString!) : nil
+                    
+                    allConnections.append(OAuthConnection(
+                        provider: provider,
+                        accessToken: accessToken,
+                        refreshToken: refreshToken,
+                        expiresAt: expiresAt
+                    ))
+                }
+            }
+        } catch {
+            print("⚠️ Error fetching from oauth_connections: \(error)")
         }
+        
+        // 2. Query strava_connections table
+        do {
+            let response = try await Supa.client
+                .from("strava_connections")
+                .select("access_token, refresh_token, token_expires_at, permission_revoked")
+                .eq("user_id", value: userIdString)
+                .eq("permission_revoked", value: false)
+                .execute()
+            
+            var dataArray: [[String: Any]]?
+            if let parsed = try? JSONSerialization.jsonObject(with: response.data, options: []) as? [[String: Any]] {
+                dataArray = parsed
+            } else if let parsed = try? JSONSerialization.jsonObject(with: response.data, options: []) as? [String: Any] {
+                dataArray = [parsed]
+            }
+            
+            if let dataArray = dataArray {
+                for dict in dataArray {
+                    guard let accessToken = dict["access_token"] as? String else {
+                        continue
+                    }
+                    
+                    let refreshToken = dict["refresh_token"] as? String
+                    let expiresAtString = dict["token_expires_at"] as? String
+                    let expiresAt = expiresAtString != nil ? timestampFormatter.date(from: expiresAtString!) : nil
+                    
+                    allConnections.append(OAuthConnection(
+                        provider: "strava",
+                        accessToken: accessToken,
+                        refreshToken: refreshToken,
+                        expiresAt: expiresAt
+                    ))
+                }
+            }
+        } catch {
+            print("⚠️ Error fetching from strava_connections: \(error)")
+        }
+        
+        // 3. Query garmin_connections table
+        do {
+            let response = try await Supa.client
+                .from("garmin_connections")
+                .select("access_token, refresh_token, token_expires_at, permission_revoked")
+                .eq("user_id", value: userIdString)
+                .eq("permission_revoked", value: false)
+                .execute()
+            
+            var dataArray: [[String: Any]]?
+            if let parsed = try? JSONSerialization.jsonObject(with: response.data, options: []) as? [[String: Any]] {
+                dataArray = parsed
+            } else if let parsed = try? JSONSerialization.jsonObject(with: response.data, options: []) as? [String: Any] {
+                dataArray = [parsed]
+            }
+            
+            if let dataArray = dataArray {
+                for dict in dataArray {
+                    guard let accessToken = dict["access_token"] as? String else {
+                        continue
+                    }
+                    
+                    let refreshToken = dict["refresh_token"] as? String
+                    let expiresAtString = dict["token_expires_at"] as? String
+                    let expiresAt = expiresAtString != nil ? timestampFormatter.date(from: expiresAtString!) : nil
+                    
+                    allConnections.append(OAuthConnection(
+                        provider: "garmin",
+                        accessToken: accessToken,
+                        refreshToken: refreshToken,
+                        expiresAt: expiresAt
+                    ))
+                }
+            }
+        } catch {
+            print("⚠️ Error fetching from garmin_connections: \(error)")
+        }
+        
+        // 4. Query polar_connections table (if it exists)
+        do {
+            let response = try await Supa.client
+                .from("polar_connections")
+                .select("access_token, refresh_token, token_expires_at, permission_revoked")
+                .eq("user_id", value: userIdString)
+                .eq("permission_revoked", value: false)
+                .execute()
+            
+            var dataArray: [[String: Any]]?
+            if let parsed = try? JSONSerialization.jsonObject(with: response.data, options: []) as? [[String: Any]] {
+                dataArray = parsed
+            } else if let parsed = try? JSONSerialization.jsonObject(with: response.data, options: []) as? [String: Any] {
+                dataArray = [parsed]
+            }
+            
+            if let dataArray = dataArray {
+                for dict in dataArray {
+                    guard let accessToken = dict["access_token"] as? String else {
+                        continue
+                    }
+                    
+                    let refreshToken = dict["refresh_token"] as? String
+                    let expiresAtString = dict["token_expires_at"] as? String
+                    let expiresAt = expiresAtString != nil ? timestampFormatter.date(from: expiresAtString!) : nil
+                    
+                    allConnections.append(OAuthConnection(
+                        provider: "polar",
+                        accessToken: accessToken,
+                        refreshToken: refreshToken,
+                        expiresAt: expiresAt
+                    ))
+                }
+            }
+        } catch {
+            // Table might not exist, which is fine
+            print("ℹ️ polar_connections table not found or error: \(error)")
+        }
+        
+        // 5. Query suunto_connections table (if it exists)
+        do {
+            let response = try await Supa.client
+                .from("suunto_connections")
+                .select("access_token, refresh_token, token_expires_at, permission_revoked")
+                .eq("user_id", value: userIdString)
+                .eq("permission_revoked", value: false)
+                .execute()
+            
+            var dataArray: [[String: Any]]?
+            if let parsed = try? JSONSerialization.jsonObject(with: response.data, options: []) as? [[String: Any]] {
+                dataArray = parsed
+            } else if let parsed = try? JSONSerialization.jsonObject(with: response.data, options: []) as? [String: Any] {
+                dataArray = [parsed]
+            }
+            
+            if let dataArray = dataArray {
+                for dict in dataArray {
+                    guard let accessToken = dict["access_token"] as? String else {
+                        continue
+                    }
+                    
+                    let refreshToken = dict["refresh_token"] as? String
+                    let expiresAtString = dict["token_expires_at"] as? String
+                    let expiresAt = expiresAtString != nil ? timestampFormatter.date(from: expiresAtString!) : nil
+                    
+                    allConnections.append(OAuthConnection(
+                        provider: "suunto",
+                        accessToken: accessToken,
+                        refreshToken: refreshToken,
+                        expiresAt: expiresAt
+                    ))
+                }
+            }
+        } catch {
+            // Table might not exist, which is fine
+            print("ℹ️ suunto_connections table not found or error: \(error)")
+        }
+        
+        print("✅ Fetched \(allConnections.count) OAuth connections from all tables")
+        return allConnections
     }
 
     /// Delete an OAuth connection for a provider
     static func deleteOAuthConnection(userId: UUID, provider: String) async throws {
+        let providerLower = provider.lowercased()
+        let userIdString = userId.uuidString
+        
+        // 1. Delete from provider-specific table if applicable
+        let specificTable: String? = {
+            switch providerLower {
+            case "strava": return "strava_connections"
+            case "garmin": return "garmin_connections"
+            case "polar": return "polar_connections"
+            case "suunto": return "suunto_connections"
+            default: return nil
+            }
+        }()
+        
+        if let table = specificTable {
+            try await Supa.client
+                .from(table)
+                .delete()
+                .eq("user_id", value: userIdString)
+                .execute()
+            print("🗑️ Deleted connection from specific table: \(table)")
+        }
+        
+        // 2. Always attempt to delete from unified oauth_connections table
         try await Supa.client
             .from("oauth_connections")
             .delete()
-            .eq("user_id", value: userId.uuidString)
-            .eq("provider", value: provider.lowercased())
+            .eq("user_id", value: userIdString)
+            .eq("provider", value: providerLower)
             .execute()
         
         print("🗑️ Deleted OAuth connection for provider: \(provider)")
@@ -2151,7 +2337,7 @@ final class SupabaseService {
         }
         
         return dataArray.compactMap { dict in
-            guard let provider = dict["provider"] as? String else {
+            guard dict["provider"] as? String != nil else {
                 return nil
             }
             
@@ -3176,15 +3362,6 @@ struct TrackPoint: Codable {
     let ele: Double
     let distFromStart: Double
     let hr: Int?
-}
-
-struct AidStationSegmentMetrics: Codable {
-    let segmentDistanceM: Double
-    let elevationGainM: Double
-    let elevationLossM: Double
-    let estimatedTimeSeconds: Double
-    let averageHeartRate: Double?
-    let targetHeartRate: Double? // Calculated target HR based on physiological maxHR and race fraction
 }
 
 struct RacePlanTitleUpdate: Codable {
