@@ -111,5 +111,10 @@ logs/
 # SQL files (may contain sensitive data)
 *.sql
 
+# Documentation and query folders (local reference only, not for git)
+queries/
+instructions/
+shell/
+
 # Note: Config.example.swift should be in the build target
 # but Config.swift should NOT be committed (it's gitignored)
