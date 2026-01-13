@@ -111,6 +111,12 @@ logs/
 # SQL files (may contain sensitive data)
 *.sql
 
+# Shell scripts (may contain sensitive data)
+*.sh
+
+# Markdown documentation files (local reference only)
+*.md
+
 # Documentation and query folders (local reference only, not for git)
 queries/
 instructions/
