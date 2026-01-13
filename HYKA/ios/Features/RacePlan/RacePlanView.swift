@@ -2224,6 +2224,7 @@ struct RacePlanView: View {
         // Try to load race_date from database if not in metadata
         if updatedMetadata.raceDate == nil {
             do {
+                print("🔍 Attempting to load race_date from database for race plan: \(plan.id.uuidString)")
                 let racePlanResponse = try await Supa.client
                     .from("race_plans")
                     .select("race_date")
@@ -2231,18 +2232,82 @@ struct RacePlanView: View {
                     .single()
                     .execute()
                 
-                if let json = try? JSONSerialization.jsonObject(with: racePlanResponse.data, options: []) as? [String: Any],
-                   let raceDateString = json["race_date"] as? String {
-                    let formatter = ISO8601DateFormatter()
-                    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-                    if let raceDate = formatter.date(from: raceDateString) {
-                        updatedMetadata.raceDate = raceDate
-                        print("📋 Loaded race_date from database: \(raceDateString)")
+                if let json = try? JSONSerialization.jsonObject(with: racePlanResponse.data, options: []) as? [String: Any] {
+                    print("🔍 Database response: \(json)")
+                    if let raceDateString = json["race_date"] as? String {
+                        // Try multiple date formats
+                        var raceDate: Date?
+                        
+                        // Format 1: ISO8601 with T separator and timezone: "2026-05-11T22:00:00+00:00"
+                        // Use custom DateFormatter for this specific format
+                        let customFormatter = DateFormatter()
+                        customFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZZZZZ"
+                        customFormatter.timeZone = TimeZone(identifier: "UTC")
+                        customFormatter.locale = Locale(identifier: "en_US_POSIX")
+                        raceDate = customFormatter.date(from: raceDateString)
+                        
+                        // Format 2: ISO8601DateFormatter (fallback)
+                        if raceDate == nil {
+                            let isoFormatter = ISO8601DateFormatter()
+                            isoFormatter.formatOptions = [.withInternetDateTime, .withTimeZone]
+                            raceDate = isoFormatter.date(from: raceDateString)
+                        }
+                        
+                        // Format 3: ISO8601 with fractional seconds: "2026-05-11T22:00:00.000+00:00"
+                        if raceDate == nil {
+                            let isoFormatter2 = ISO8601DateFormatter()
+                            isoFormatter2.formatOptions = [.withInternetDateTime, .withFractionalSeconds, .withTimeZone]
+                            raceDate = isoFormatter2.date(from: raceDateString)
+                        }
+                        
+                        // Format 3: PostgreSQL timestamp with timezone: "2026-05-11 22:00:00+00:00"
+                        if raceDate == nil {
+                            // Replace T with space for PostgreSQL format
+                            let pgDateString = raceDateString.replacingOccurrences(of: "T", with: " ")
+                            let pgFormatter = DateFormatter()
+                            pgFormatter.dateFormat = "yyyy-MM-dd HH:mm:ssZZZZZ"
+                            pgFormatter.timeZone = TimeZone(identifier: "UTC")
+                            raceDate = pgFormatter.date(from: pgDateString)
+                        }
+                        
+                        // Format 4: PostgreSQL timestamp without timezone: "2026-05-11 22:00:00"
+                        if raceDate == nil {
+                            // Remove timezone part
+                            let simpleDateString = raceDateString
+                                .replacingOccurrences(of: "T", with: " ")
+                                .components(separatedBy: CharacterSet(charactersIn: "+-")).first ?? raceDateString
+                            let pgFormatter2 = DateFormatter()
+                            pgFormatter2.dateFormat = "yyyy-MM-dd HH:mm:ss"
+                            pgFormatter2.timeZone = TimeZone(identifier: "UTC")
+                            raceDate = pgFormatter2.date(from: simpleDateString.trimmingCharacters(in: .whitespaces))
+                        }
+                        
+                        // Format 4: Simple date (YYYY-MM-DD) - DATE type
+                        if raceDate == nil {
+                            let dateFormatter = DateFormatter()
+                            dateFormatter.dateFormat = "yyyy-MM-dd"
+                            dateFormatter.timeZone = TimeZone(identifier: "UTC")
+                            raceDate = dateFormatter.date(from: raceDateString)
+                        }
+                        
+                        if let raceDate = raceDate {
+                            updatedMetadata.raceDate = raceDate
+                            print("📋 Loaded race_date from database: \(raceDateString) -> \(raceDate)")
+                        } else {
+                            print("⚠️ Could not parse race_date: \(raceDateString)")
+                        }
+                    } else {
+                        print("⚠️ race_date is null in database for race plan: \(plan.id.uuidString)")
                     }
+                } else {
+                    print("⚠️ Could not parse database response")
                 }
             } catch {
                 print("⚠️ Could not load race_date from database: \(error)")
+                print("   Error details: \(error.localizedDescription)")
             }
+        } else {
+            print("✅ Race date already in metadata: \(updatedMetadata.raceDate?.description ?? "nil")")
         }
         
         print("📋 Loaded metadata: date=\(updatedMetadata.raceDate?.description ?? "nil"), distance=\(updatedMetadata.distance?.description ?? "nil"), elevation=\(updatedMetadata.elevationGain?.description ?? "nil")")
@@ -2450,16 +2515,71 @@ struct RacePlanView: View {
                         
                         if let json = try? JSONSerialization.jsonObject(with: racePlanResponse.data, options: []) as? [String: Any],
                            let raceDateString = json["race_date"] as? String {
-                            let formatter = ISO8601DateFormatter()
-                            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-                            if let raceDate = formatter.date(from: raceDateString) {
+                            // Try multiple date formats
+                            var raceDate: Date?
+                            
+                            // Format 1: ISO8601 with T separator and timezone: "2026-05-11T22:00:00+00:00"
+                            // Use custom DateFormatter for this specific format
+                            let customFormatter = DateFormatter()
+                            customFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZZZZZ"
+                            customFormatter.timeZone = TimeZone(identifier: "UTC")
+                            customFormatter.locale = Locale(identifier: "en_US_POSIX")
+                            raceDate = customFormatter.date(from: raceDateString)
+                            
+                            // Format 2: ISO8601DateFormatter (fallback)
+                            if raceDate == nil {
+                                let isoFormatter = ISO8601DateFormatter()
+                                isoFormatter.formatOptions = [.withInternetDateTime, .withTimeZone]
+                                raceDate = isoFormatter.date(from: raceDateString)
+                            }
+                            
+                            // Format 3: ISO8601 with fractional seconds: "2026-05-11T22:00:00.000+00:00"
+                            if raceDate == nil {
+                                let isoFormatter2 = ISO8601DateFormatter()
+                                isoFormatter2.formatOptions = [.withInternetDateTime, .withFractionalSeconds, .withTimeZone]
+                                raceDate = isoFormatter2.date(from: raceDateString)
+                            }
+                            
+                            // Format 3: PostgreSQL timestamp with timezone: "2026-05-11 22:00:00+00:00"
+                            if raceDate == nil {
+                                // Replace T with space for PostgreSQL format
+                                let pgDateString = raceDateString.replacingOccurrences(of: "T", with: " ")
+                                let pgFormatter = DateFormatter()
+                                pgFormatter.dateFormat = "yyyy-MM-dd HH:mm:ssZZZZZ"
+                                pgFormatter.timeZone = TimeZone(identifier: "UTC")
+                                raceDate = pgFormatter.date(from: pgDateString)
+                            }
+                            
+                            // Format 4: PostgreSQL timestamp without timezone: "2026-05-11 22:00:00"
+                            if raceDate == nil {
+                                // Remove timezone part
+                                let simpleDateString = raceDateString
+                                    .replacingOccurrences(of: "T", with: " ")
+                                    .components(separatedBy: CharacterSet(charactersIn: "+-")).first ?? raceDateString
+                                let pgFormatter2 = DateFormatter()
+                                pgFormatter2.dateFormat = "yyyy-MM-dd HH:mm:ss"
+                                pgFormatter2.timeZone = TimeZone(identifier: "UTC")
+                                raceDate = pgFormatter2.date(from: simpleDateString.trimmingCharacters(in: .whitespaces))
+                            }
+                            
+                            // Format 4: Simple date (YYYY-MM-DD) - DATE type
+                            if raceDate == nil {
+                                let dateFormatter = DateFormatter()
+                                dateFormatter.dateFormat = "yyyy-MM-dd"
+                                dateFormatter.timeZone = TimeZone(identifier: "UTC")
+                                raceDate = dateFormatter.date(from: raceDateString)
+                            }
+                            
+                            if let raceDate = raceDate {
                                 await MainActor.run {
                                     storedMetadata.raceDate = raceDate
                                     raceMetadata = storedMetadata
-                                    print("✅ Loaded race_date from database: \(raceDateString)")
+                                    print("✅ Loaded race_date from database: \(raceDateString) -> \(raceDate)")
                                 }
                                 // Also save to local store for offline access
                                 RacePlanMetadataStore.save(storedMetadata, for: plan.id)
+                            } else {
+                                print("⚠️ Could not parse race_date: \(raceDateString)")
                             }
                         }
                     } catch {

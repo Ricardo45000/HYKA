@@ -99,33 +99,112 @@ serve(async (req) => {
           // Try the diauth endpoint (OAuth2 PKCE)
           const tokenUrl = 'https://diauth.garmin.com/di-oauth2-service/oauth/token'
           
-          // Decode refresh token if it's base64 encoded
+          // Garmin refresh tokens are typically plain strings, not base64-encoded
+          // Try as-is first, then try decoding if that fails
           let refreshToken = connection.refresh_token
-          try {
-            const decoded = atob(refreshToken)
-            const parsed = JSON.parse(decoded)
-            if (parsed.refreshTokenValue) {
-              refreshToken = parsed.refreshTokenValue
-              console.log("   📦 Decoded refresh token from base64 JSON")
-            }
-          } catch (e) {
-            console.log("   📦 Using refresh token as-is (not base64)")
-          }
+          let refreshTokenToUse = refreshToken
           
+          // Log token format (first 10 chars only for security)
+          console.log(`   🔑 Refresh token format: ${refreshToken.substring(0, 10)}... (length: ${refreshToken.length})`)
+          
+          // Try base64 decoding only if it looks like base64 (longer, contains base64 chars)
+          // Most Garmin refresh tokens are plain strings, so we'll try as-is first
           const refreshResponse = await fetch(tokenUrl, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/x-www-form-urlencoded',
             },
             body: new URLSearchParams({
-              refresh_token: refreshToken,
+              refresh_token: refreshTokenToUse,
               client_id: clientId,
               client_secret: clientSecret,
               grant_type: 'refresh_token'
             })
           })
           
-          if (refreshResponse.ok) {
+          // If first attempt fails with invalid_grant, try decoding from base64 JSON
+          if (!refreshResponse.ok) {
+            const errorText = await refreshResponse.text()
+            
+            // If error mentions decoding or invalid_grant, try base64 decode
+            if (errorText.includes('decoding') || errorText.includes('invalid_grant')) {
+              console.log("   🔄 First attempt failed, trying base64 decode...")
+              try {
+                const decoded = atob(refreshToken)
+                const parsed = JSON.parse(decoded)
+                if (parsed.refreshTokenValue) {
+                  refreshTokenToUse = parsed.refreshTokenValue
+                  console.log("   📦 Decoded refresh token from base64 JSON")
+                  
+                  // Retry with decoded token
+                  const retryResponse = await fetch(tokenUrl, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: new URLSearchParams({
+                      refresh_token: refreshTokenToUse,
+                      client_id: clientId,
+                      client_secret: clientSecret,
+                      grant_type: 'refresh_token'
+                    })
+                  })
+                  
+                  if (retryResponse.ok) {
+                    const tokens = await retryResponse.json()
+                    console.log("   ✅ Token refreshed successfully (after decode)")
+                    accessToken = tokens.access_token
+                    
+                    const newExpiresAt = new Date(Date.now() + (tokens.expires_in || 3600) * 1000).toISOString()
+                    await supabase
+                      .from('garmin_connections')
+                      .update({
+                        access_token: tokens.access_token,
+                        refresh_token: tokens.refresh_token || refreshTokenToUse,
+                        token_expires_at: newExpiresAt,
+                        updated_at: new Date().toISOString()
+                      })
+                      .eq('user_id', userId)
+                    
+                    console.log("   💾 Refreshed tokens saved to database")
+                    // Continue with sync
+                  } else {
+                    // Both attempts failed - token is invalid/expired
+                    throw new Error(`Token refresh failed: ${retryResponse.status} - ${await retryResponse.text()}`)
+                  }
+                } else {
+                  throw new Error("Decoded token doesn't contain refreshTokenValue")
+                }
+              } catch (decodeError) {
+                // Decoding failed, token is likely invalid/expired
+                console.error(`   ❌ Token refresh failed: ${refreshResponse.status}`)
+                console.error(`   Error: ${errorText.substring(0, 300)}`)
+                return new Response(JSON.stringify({ 
+                  error: "Token refresh failed - Refresh token is invalid or expired",
+                  status: refreshResponse.status,
+                  garmin_error: errorText,
+                  solution: "Please reconnect your Garmin account in the app. Go to Profile → Connect with your wearables → Garmin → Disconnect, then reconnect."
+                }), {
+                  status: 401,
+                  headers: { 'Content-Type': 'application/json' }
+                })
+              }
+            } else {
+              // Other error, return as-is
+              console.error(`   ❌ Token refresh failed: ${refreshResponse.status}`)
+              console.error(`   Error: ${errorText.substring(0, 300)}`)
+              return new Response(JSON.stringify({ 
+                error: "Token refresh failed",
+                status: refreshResponse.status,
+                garmin_error: errorText,
+                solution: "Please reconnect your Garmin account in the app"
+              }), {
+                status: 401,
+                headers: { 'Content-Type': 'application/json' }
+              })
+            }
+          } else {
+            // First attempt succeeded
             const tokens = await refreshResponse.json()
             console.log("   ✅ Token refreshed successfully")
             console.log("   📊 New token expires in:", tokens.expires_in || 3600, "seconds")
@@ -151,18 +230,6 @@ serve(async (req) => {
             } else {
               console.log("   💾 Refreshed tokens saved to database")
             }
-          } else {
-            const errorText = await refreshResponse.text()
-            console.error(`   ❌ Token refresh failed: ${refreshResponse.status}`)
-            console.error(`   Error: ${errorText.substring(0, 200)}`)
-            return new Response(JSON.stringify({ 
-              error: "Token refresh failed",
-              status: refreshResponse.status,
-              hint: "Try reconnecting Garmin in the app"
-            }), {
-              status: 401,
-              headers: { 'Content-Type': 'application/json' }
-            })
           }
         } catch (e) {
           console.error("   ❌ Error refreshing token:", e)

@@ -43,10 +43,29 @@ serve(async (req) => {
     })
   }
   
+  // Handle GET requests (webhook verification/test from Garmin)
+  if (req.method === 'GET') {
+    console.log("🔍 GET request received - likely webhook verification/test from Garmin")
+    console.log("   URL:", req.url)
+    console.log("   Query params:", new URL(req.url).searchParams.toString())
+    return new Response("OK", { 
+      status: 200,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'text/plain'
+      }
+    })
+  }
+  
   try {
+    // Log ALL incoming requests - even empty ones
     console.log("🏥 Garmin Health Webhook received")
     console.log("   Method:", req.method)
     console.log("   URL:", req.url)
+    console.log("   Timestamp:", new Date().toISOString())
+    console.log("   User-Agent:", req.headers.get('user-agent') || 'N/A')
+    console.log("   Content-Type:", req.headers.get('content-type') || 'N/A')
+    console.log("   Content-Length:", req.headers.get('content-length') || 'N/A')
     
     // Parse request body (handle both JSON and form data)
     let body: any
@@ -60,6 +79,7 @@ serve(async (req) => {
       }
     } catch (parseError) {
       console.error("❌ Error parsing request body:", parseError)
+      // Note: Can't read body again after it's been consumed, so we log what we can
       return new Response("OK", { 
         status: 200,
         headers: {
@@ -70,6 +90,19 @@ serve(async (req) => {
     }
     
     console.log("   Body keys:", Object.keys(body))
+    console.log("   Body size:", JSON.stringify(body).length, "bytes")
+    
+    // Log if body is empty or has no data
+    if (!body || Object.keys(body).length === 0) {
+      console.log("⚠️ Empty webhook body received - Garmin may be testing the endpoint")
+      return new Response("OK", { 
+        status: 200,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Content-Type': 'text/plain'
+        }
+      })
+    }
     
     // Extract Garmin user ID from various possible locations
     let garminUserId = body.userId || body.garminUserId || body.user_id
@@ -111,6 +144,11 @@ serve(async (req) => {
     
     if (lookupError || !connection) {
       console.log("⚠️ No HYKA user found for Garmin user:", garminUserId)
+      console.log("   Lookup error:", lookupError?.message || 'No error (connection not found)')
+      console.log("   This means:")
+      console.log("   1. The Garmin user ID in the webhook doesn't match any garmin_user_id in garmin_connections")
+      console.log("   2. OR the user hasn't connected their Garmin account in the app")
+      console.log("   3. OR the garmin_user_id wasn't saved during OAuth connection")
       return new Response("OK", { status: 200 })
     }
     
@@ -171,6 +209,23 @@ serve(async (req) => {
       metricsDataArray = [body]
       callbackUrl = body.callbackURL || body.callbackUrl || null
       console.log("📊 Processing generic health data")
+      console.log("   ⚠️ Unknown webhook format - body structure:", JSON.stringify(body).substring(0, 500))
+    }
+    
+    // Log if no data was found
+    if (metricsDataArray.length === 0 || (metricsDataArray.length === 1 && Object.keys(metricsDataArray[0] || {}).length === 0)) {
+      console.log("⚠️ No health data found in webhook payload")
+      console.log("   This could mean:")
+      console.log("   1. Garmin sent a test/verification webhook (empty body)")
+      console.log("   2. The webhook format changed")
+      console.log("   3. Health data is sent via a different webhook endpoint")
+      return new Response("OK", { 
+        status: 200,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Content-Type': 'text/plain'
+        }
+      })
     }
     
     // Process each item in the metricsDataArray
@@ -264,17 +319,78 @@ serve(async (req) => {
       }
       
       // Extract key metrics from the data
-      const fitnessAge = metricsData?.fitnessAge || metricsData?.fitness_age || null
-      const vo2Max = metricsData?.vo2Max || metricsData?.vo2_max || metricsData?.vo2max || null
+      // Note: fitnessAge and vo2Max only come from userMetrics/healthSnapshot webhooks,
+      // not from sleeps/epochs/dailies webhooks
+      let fitnessAge = metricsData?.fitnessAge || metricsData?.fitness_age || null
+      let vo2Max = metricsData?.vo2Max || metricsData?.vo2_max || metricsData?.vo2max || null
+      
+      // If not found in current webhook data, look up the latest values from previous userMetrics
+      // This ensures fitness_age and vo2_max are available for all health metrics records
+      if ((!fitnessAge || !vo2Max) && webhookType !== 'userMetrics' && webhookType !== 'healthSnapshot') {
+        try {
+          const { data: latestMetrics } = await supabase
+            .from('garmin_health_metrics')
+            .select('fitness_age, vo2_max')
+            .eq('user_id', connection.user_id)
+            .eq('garmin_user_id', garminUserId)
+            .not('fitness_age', 'is', null)
+            .not('vo2_max', 'is', null)
+            .order('metric_date', { ascending: false })
+            .limit(1)
+            .single()
+          
+          if (latestMetrics) {
+            if (!fitnessAge && latestMetrics.fitness_age) {
+              fitnessAge = latestMetrics.fitness_age
+            }
+            if (!vo2Max && latestMetrics.vo2_max) {
+              vo2Max = latestMetrics.vo2_max
+            }
+          }
+        } catch (lookupError) {
+          // Silently fail - it's okay if we can't find previous values
+          // This is just a convenience lookup, not critical
+        }
+      }
       
       // Extract webhook-specific fields
-      const steps = metricsData?.steps || metricsData?.step_count || null
-      const activeCalories = metricsData?.activeKilocalories || metricsData?.active_calories || null
-      const totalCalories = metricsData?.bmrKilocalories || metricsData?.total_calories || null
-      const restingHeartRate = metricsData?.restingHeartRateInBeatsPerMinute || metricsData?.resting_heart_rate || null
-      const avgHeartRate = metricsData?.averageHeartRateInBeatsPerMinute || metricsData?.avg_heart_rate || null
-      const maxHeartRate = metricsData?.maxHeartRateInBeatsPerMinute || metricsData?.max_heart_rate || null
-      const minHeartRate = metricsData?.minHeartRateInBeatsPerMinute || metricsData?.min_heart_rate || null
+      let steps = metricsData?.steps || metricsData?.step_count || null
+      let activeCalories = metricsData?.activeKilocalories || metricsData?.active_calories || null
+      let totalCalories = metricsData?.bmrKilocalories || metricsData?.total_calories || null
+      let restingHeartRate = metricsData?.restingHeartRateInBeatsPerMinute || metricsData?.resting_heart_rate || null
+      let avgHeartRate = metricsData?.averageHeartRateInBeatsPerMinute || metricsData?.avg_heart_rate || null
+      let maxHeartRate = metricsData?.maxHeartRateInBeatsPerMinute || metricsData?.max_heart_rate || null
+      let minHeartRate = metricsData?.minHeartRateInBeatsPerMinute || metricsData?.min_heart_rate || null
+      
+      // For userMetrics/healthSnapshot webhooks, look up dailies data for the same date
+      // to fill in missing daily activity fields (steps, calories, heart rate, etc.)
+      if ((webhookType === 'userMetrics' || webhookType === 'healthSnapshot') && metricDate) {
+        try {
+          const { data: dailiesData } = await supabase
+            .from('garmin_health_metrics')
+            .select('steps, active_calories, total_calories, resting_heart_rate, avg_heart_rate, max_heart_rate, min_heart_rate, stress_level, body_battery')
+            .eq('user_id', connection.user_id)
+            .eq('garmin_user_id', garminUserId)
+            .eq('metric_date', metricDate)
+            .not('steps', 'is', null)  // Only get records that have daily activity data
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .single()
+          
+          if (dailiesData) {
+            // Fill in missing fields from dailies data
+            if (!steps && dailiesData.steps) steps = dailiesData.steps
+            if (!activeCalories && dailiesData.active_calories) activeCalories = dailiesData.active_calories
+            if (!totalCalories && dailiesData.total_calories) totalCalories = dailiesData.total_calories
+            if (!restingHeartRate && dailiesData.resting_heart_rate) restingHeartRate = dailiesData.resting_heart_rate
+            if (!avgHeartRate && dailiesData.avg_heart_rate) avgHeartRate = dailiesData.avg_heart_rate
+            if (!maxHeartRate && dailiesData.max_heart_rate) maxHeartRate = dailiesData.max_heart_rate
+            if (!minHeartRate && dailiesData.min_heart_rate) minHeartRate = dailiesData.min_heart_rate
+          }
+        } catch (lookupError) {
+          // Silently fail - it's okay if we can't find dailies data
+        }
+      }
       
       // Sleep-specific fields
       const sleepDurationSeconds = metricsData?.durationInSeconds || metricsData?.sleep_duration_seconds || null
@@ -299,6 +415,36 @@ serve(async (req) => {
       const avgRespirationRate = metricsData?.timeOffsetEpochToBreaths ? 
         Object.values(metricsData.timeOffsetEpochToBreaths).reduce((sum: number, val: any) => sum + (Number(val) || 0), 0) / Object.keys(metricsData.timeOffsetEpochToBreaths).length 
         : null
+      
+      // For non-dailies webhooks, look up existing dailies data for the same date to merge
+      // This ensures all records have complete data (steps, calories, heart rate, etc.)
+      if (webhookType !== 'dailies' && metricDate) {
+        try {
+          const { data: existingDailies } = await supabase
+            .from('garmin_health_metrics')
+            .select('steps, active_calories, total_calories, resting_heart_rate, avg_heart_rate, max_heart_rate, min_heart_rate, stress_level, body_battery')
+            .eq('user_id', connection.user_id)
+            .eq('garmin_user_id', garminUserId)
+            .eq('metric_date', metricDate)
+            .not('steps', 'is', null)  // Only get records that have daily activity data
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .single()
+          
+          if (existingDailies) {
+            // Merge missing fields from existing dailies data
+            if (!steps && existingDailies.steps) steps = existingDailies.steps
+            if (!activeCalories && existingDailies.active_calories) activeCalories = existingDailies.active_calories
+            if (!totalCalories && existingDailies.total_calories) totalCalories = existingDailies.total_calories
+            if (!restingHeartRate && existingDailies.resting_heart_rate) restingHeartRate = existingDailies.resting_heart_rate
+            if (!avgHeartRate && existingDailies.avg_heart_rate) avgHeartRate = existingDailies.avg_heart_rate
+            if (!maxHeartRate && existingDailies.max_heart_rate) maxHeartRate = existingDailies.max_heart_rate
+            if (!minHeartRate && existingDailies.min_heart_rate) minHeartRate = existingDailies.min_heart_rate
+          }
+        } catch (lookupError) {
+          // Silently fail - it's okay if we can't find dailies data
+        }
+      }
       
       // Build health data object
       const healthData: any = {
@@ -339,40 +485,101 @@ serve(async (req) => {
       // Store health metrics
       console.log(`💾 Storing health metrics item ${i + 1}/${metricsDataArray.length}...`)
       
-      // Use upsert with correct conflict resolution
+      // First, try to get existing record for this date to merge data
+      const { data: existingRecord } = await supabase
+        .from('garmin_health_metrics')
+        .select('*')
+        .eq('user_id', connection.user_id)
+        .eq('garmin_user_id', garminUserId)
+        .eq('metric_date', metricDate || new Date().toISOString().split('T')[0])
+        .maybeSingle()
+      
+      // Merge data: use existing values if new values are null
+      if (existingRecord) {
+        healthData.fitness_age = healthData.fitness_age ?? existingRecord.fitness_age
+        healthData.vo2_max = healthData.vo2_max ?? existingRecord.vo2_max
+        healthData.steps = healthData.steps ?? existingRecord.steps
+        healthData.active_calories = healthData.active_calories ?? existingRecord.active_calories
+        healthData.total_calories = healthData.total_calories ?? existingRecord.total_calories
+        healthData.resting_heart_rate = healthData.resting_heart_rate ?? existingRecord.resting_heart_rate
+        healthData.avg_heart_rate = healthData.avg_heart_rate ?? existingRecord.avg_heart_rate
+        healthData.max_heart_rate = healthData.max_heart_rate ?? existingRecord.max_heart_rate
+        healthData.min_heart_rate = healthData.min_heart_rate ?? existingRecord.min_heart_rate
+        healthData.sleep_duration_seconds = healthData.sleep_duration_seconds ?? existingRecord.sleep_duration_seconds
+        healthData.sleep_score = healthData.sleep_score ?? existingRecord.sleep_score
+        healthData.deep_sleep_seconds = healthData.deep_sleep_seconds ?? existingRecord.deep_sleep_seconds
+        healthData.light_sleep_seconds = healthData.light_sleep_seconds ?? existingRecord.light_sleep_seconds
+        healthData.rem_sleep_seconds = healthData.rem_sleep_seconds ?? existingRecord.rem_sleep_seconds
+        healthData.awake_seconds = healthData.awake_seconds ?? existingRecord.awake_seconds
+        healthData.sleep_start_time = healthData.sleep_start_time ?? existingRecord.sleep_start_time
+        healthData.sleep_end_time = healthData.sleep_end_time ?? existingRecord.sleep_end_time
+        healthData.stress_level = healthData.stress_level ?? existingRecord.stress_level
+        healthData.body_battery = healthData.body_battery ?? existingRecord.body_battery
+        healthData.avg_respiration_rate = healthData.avg_respiration_rate ?? existingRecord.avg_respiration_rate
+        // Keep the most recent raw_data if it's more complete
+        if (existingRecord.raw_data && !healthData.raw_data) {
+          healthData.raw_data = existingRecord.raw_data
+        }
+        // Use the earliest timestamp
+        if (existingRecord.timestamp && healthData.timestamp) {
+          const existingTs = new Date(existingRecord.timestamp).getTime()
+          const newTs = new Date(healthData.timestamp).getTime()
+          if (existingTs < newTs) {
+            healthData.timestamp = existingRecord.timestamp
+          }
+        }
+      }
+      
+      // Remove null/undefined fields again after merging
+      Object.keys(healthData).forEach(key => {
+        if (healthData[key] === null || healthData[key] === undefined) {
+          delete healthData[key]
+        }
+      })
+      
+      // Use upsert with daily summary constraint (user_id, garmin_user_id, metric_date)
+      // Try column-based conflict first (works even without the constraint)
+      // Then try named constraint (works after migration)
       let insertError: any = null
       let insertedData: any = null
       
+      // First, try column-based conflict (works without constraint)
       const result1 = await supabase
         .from('garmin_health_metrics')
         .upsert(healthData, {
-          onConflict: 'garmin_health_metrics_user_id_timestamp_key'
+          onConflict: 'user_id,garmin_user_id,metric_date'
         })
         .select()
       
-      if (result1.error) {
+      insertError = result1.error
+      insertedData = result1.data
+      
+      // If column-based conflict fails, try named constraint (after migration)
+      if (insertError && (insertError.message?.includes('does not exist') || insertError.code === '42704' || insertError.code === '42P01')) {
+        console.log(`   Trying named constraint instead...`)
         const result2 = await supabase
+          .from('garmin_health_metrics')
+          .upsert(healthData, {
+            onConflict: 'garmin_health_metrics_user_date_unique'
+          })
+          .select()
+        
+        insertError = result2.error
+        insertedData = result2.data
+      }
+      
+      // Final fallback: if both fail, try old constraint (before migration)
+      if (insertError) {
+        console.log(`   Trying old timestamp constraint as fallback...`)
+        const result3 = await supabase
           .from('garmin_health_metrics')
           .upsert(healthData, {
             onConflict: 'user_id,timestamp'
           })
           .select()
         
-        if (result2.error) {
-          const result3 = await supabase
-            .from('garmin_health_metrics')
-            .insert(healthData)
-            .select()
-          
-          insertError = result3.error
-          insertedData = result3.data
-        } else {
-          insertError = result2.error
-          insertedData = result2.data
-        }
-      } else {
-        insertError = result1.error
-        insertedData = result1.data
+        insertError = result3.error
+        insertedData = result3.data
       }
       
       if (insertError) {
