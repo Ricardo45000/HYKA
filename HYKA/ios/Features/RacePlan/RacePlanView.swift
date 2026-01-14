@@ -168,6 +168,8 @@ struct RacePlanView: View {
     @State private var showShareSheet = false
     @State private var isSyncingDevice = false
     @State private var isSavingStations = false
+    @State private var isSyncingWorkout = false
+    @State private var isSchedulingWorkout = false
     
     // Fuel Type Model
     struct FuelType: Identifiable {
@@ -594,6 +596,36 @@ struct RacePlanView: View {
                                 .frame(height: 40)
                                 .background(Color.hykaPurple)
                                 .cornerRadius(HYKATheme.cornerRadiusM)
+                            }
+                            
+                            // Sync to Device button (shown for Garmin, Polar, Suunto - NOT Strava)
+                            if let provider = connectedProvider?.lowercased(), 
+                               provider != "strava" {
+                                Button {
+                                    Task {
+                                        await syncWorkoutToDevice()
+                                    }
+                                } label: {
+                                    HStack {
+                                        if isSyncingWorkout {
+                                            ProgressView()
+                                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                                .scaleEffect(0.8)
+                                        } else {
+                                            Image(systemName: "arrow.triangle.2.circlepath")
+                                                .font(.system(size: 14, weight: .semibold))
+                                        }
+                                        Text(isSyncingWorkout ? "Syncing..." : "Sync to \(connectedProvider?.capitalized ?? "Device")")
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .lineLimit(1)
+                                    }
+                                    .foregroundColor(.white)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 40)
+                                    .background(isSyncingWorkout ? Color.gray : Color.hykaPurple)
+                                    .cornerRadius(HYKATheme.cornerRadiusM)
+                                }
+                                .disabled(isSyncingWorkout)
                             }
                         }
                     }
@@ -1897,6 +1929,319 @@ struct RacePlanView: View {
         }
     }
     */
+    
+    /// Sync race plan workout to the connected device
+    private func syncWorkoutToDevice() async {
+        guard let userId = await resolveUserId() else {
+            await MainActor.run {
+                ErrorManager.shared.showError(
+                    NSError(domain: "Sync", code: 1, userInfo: [NSLocalizedDescriptionKey: "User not authenticated"]),
+                    title: "Sync Failed"
+                )
+            }
+            return
+        }
+        
+        // Get current connected provider
+        let provider = connectedProvider?.lowercased() ?? ""
+        
+        if provider == "garmin" {
+            await syncToGarmin(userId: userId)
+        } else if provider == "polar" {
+            await syncToPolar(userId: userId)
+        } else if provider == "suunto" {
+            await syncToSuunto(userId: userId)
+        } else if provider == "strava" {
+            await MainActor.run {
+                ErrorManager.shared.showError(
+                    NSError(domain: "Sync", code: 4, userInfo: [NSLocalizedDescriptionKey: "Strava integration for workouts is coming soon!"]),
+                    title: "Coming Soon"
+                )
+            }
+        } else {
+            await MainActor.run {
+                ErrorManager.shared.showError(
+                    NSError(domain: "Sync", code: 2, userInfo: [NSLocalizedDescriptionKey: "No supported device connected. Please connect Garmin, Suunto, Polar or Strava first."]),
+                    title: "No Device Connected"
+                )
+            }
+        }
+    }
+    
+    private func syncToGarmin(userId: UUID) async {
+        // Validate that we have pacing segments
+        guard !pacingSegments.isEmpty else {
+            await MainActor.run {
+                ErrorManager.shared.showError(
+                    NSError(domain: "Sync", code: 3, userInfo: [NSLocalizedDescriptionKey: "No pacing segments found. Please create a race plan with pacing segments first."]),
+                    title: "Sync Failed"
+                )
+            }
+            return
+        }
+        
+        await MainActor.run {
+            isSyncingWorkout = true
+        }
+        
+        do {
+            print("🔄 Starting Garmin workout sync...")
+            let workoutName = selectedRace?.title ?? raceDetails?.name ?? "Race Plan"
+            print("📋 Workout Name: \(workoutName)")
+            print("📋 Pacing Segments: \(pacingSegments.count)")
+            print("📋 Fueling Stations: \(fuelingStations.count)")
+            
+            // Create workout sync service (Edge Function will handle token refresh)
+            let syncService = GarminWorkoutSyncService(userId: userId)
+            
+            // Sync workout to Garmin
+            let workoutId = try await syncService.syncRacePlanToGarmin(
+                workoutName: workoutName,
+                pacingSegments: pacingSegments,
+                fuelingStations: fuelingStations,
+                raceDate: raceMetadata?.raceDate
+            )
+            
+            print("✅ Garmin workout created successfully: \(workoutId)")
+            
+            // If race date exists, automatically schedule the workout for that date
+            if let raceDate = raceMetadata?.raceDate {
+                do {
+                    try await syncService.scheduleWorkout(workoutId: workoutId, date: raceDate)
+                    print("✅ Workout scheduled for race date: \(raceDate)")
+                    
+                    await MainActor.run {
+                        isSyncingWorkout = false
+                        
+                        // Show success message with scheduling info
+                        let dateFormatter = DateFormatter()
+                        dateFormatter.dateStyle = .medium
+                        dateFormatter.timeStyle = .none
+                        let dateString = dateFormatter.string(from: raceDate)
+                        
+                        ErrorManager.shared.showInfo(
+                            title: "Workout Synced & Scheduled",
+                            message: "Workout created and scheduled in Garmin Connect for \(dateString)!"
+                        )
+                    }
+                } catch {
+                    // If scheduling fails, still show success for workout creation
+                    print("⚠️ Workout created but scheduling failed: \(error)")
+                    
+                    await MainActor.run {
+                        isSyncingWorkout = false
+                        ErrorManager.shared.showInfo(
+                            title: "Workout Synced",
+                            message: "Workout created in Garmin Connect. Scheduling failed - you can schedule it manually in Garmin Connect."
+                        )
+                    }
+                }
+            } else {
+                await MainActor.run {
+                    isSyncingWorkout = false
+                    
+                    // Show success message as info alert
+                    ErrorManager.shared.showInfo(
+                        title: "Sync Successful",
+                        message: "Workout synced to Garmin Connect successfully!"
+                    )
+                }
+            }
+            
+        } catch {
+            print("❌ Garmin workout sync failed: \(error)")
+            print("❌ Error details: \(error.localizedDescription)")
+            
+            await MainActor.run {
+                isSyncingWorkout = false
+                ErrorManager.shared.showError(error, title: "Sync Failed")
+            }
+        }
+    }
+    
+    private func syncToPolar(userId: UUID) async {
+        // Validate that we have pacing segments
+        guard !pacingSegments.isEmpty else {
+            await MainActor.run {
+                ErrorManager.shared.showError(
+                    NSError(domain: "Sync", code: 3, userInfo: [NSLocalizedDescriptionKey: "No pacing segments found. Please create a race plan with pacing segments first."]),
+                    title: "Sync Failed"
+                )
+            }
+            return
+        }
+        
+        await MainActor.run {
+            isSyncingWorkout = true
+        }
+        
+        do {
+            print("🔄 Starting Polar workout sync...")
+            let workoutName = selectedRace?.title ?? raceDetails?.name ?? "Race Plan"
+            print("📋 Workout Name: \(workoutName)")
+            print("📋 Pacing Segments: \(pacingSegments.count)")
+            print("📋 Fueling Stations: \(fuelingStations.count)")
+            
+            // Create workout sync service (Edge Function will handle token refresh)
+            let syncService = PolarWorkoutSyncService(userId: userId)
+            
+            // Sync workout to Polar
+            let workoutId = try await syncService.syncRacePlanToPolar(
+                workoutName: workoutName,
+                pacingSegments: pacingSegments,
+                fuelingStations: fuelingStations,
+                raceDate: raceMetadata?.raceDate
+            )
+            
+            print("✅ Polar workout created successfully: \(workoutId)")
+            
+            await MainActor.run {
+                isSyncingWorkout = false
+                
+                // Show success message as info alert
+                ErrorManager.shared.showInfo(
+                    title: "Sync Successful",
+                    message: "Workout synced to Polar Flow successfully!"
+                )
+            }
+            
+        } catch {
+            print("❌ Polar workout sync failed: \(error)")
+            print("❌ Error details: \(error.localizedDescription)")
+            
+            await MainActor.run {
+                isSyncingWorkout = false
+                ErrorManager.shared.showError(error, title: "Sync Failed")
+            }
+        }
+    }
+    
+    private func syncToSuunto(userId: UUID) async {
+        // Validate that we have pacing segments
+        guard !pacingSegments.isEmpty else {
+            await MainActor.run {
+                ErrorManager.shared.showError(
+                    NSError(domain: "Sync", code: 3, userInfo: [NSLocalizedDescriptionKey: "No pacing segments found. Please create a race plan with pacing segments first."]),
+                    title: "Sync Failed"
+                )
+            }
+            return
+        }
+        
+        await MainActor.run {
+            isSyncingWorkout = true
+        }
+        
+        do {
+            print("🔄 Starting Suunto workout sync...")
+            let workoutName = selectedRace?.title ?? raceDetails?.name ?? "Race Plan"
+            print("📋 Workout Name: \(workoutName)")
+            print("📋 Pacing Segments: \(pacingSegments.count)")
+            print("📋 Fueling Stations: \(fuelingStations.count)")
+            
+            // Create workout sync service (Edge Function will handle token refresh)
+            let syncService = SuuntoWorkoutSyncService(userId: userId)
+            
+            // Sync workout to Suunto
+            let workoutId = try await syncService.syncRacePlanToSuunto(
+                workoutName: workoutName,
+                pacingSegments: pacingSegments,
+                fuelingStations: fuelingStations,
+                raceDate: raceMetadata?.raceDate
+            )
+            
+            print("✅ Suunto workout created successfully: \(workoutId)")
+            
+            await MainActor.run {
+                isSyncingWorkout = false
+                
+                // Show success message as info alert
+                ErrorManager.shared.showInfo(
+                    title: "Sync Successful",
+                    message: "Workout synced to Suunto successfully!"
+                )
+            }
+            
+        } catch {
+            print("❌ Suunto workout sync failed: \(error)")
+            print("❌ Error details: \(error.localizedDescription)")
+            
+            await MainActor.run {
+                isSyncingWorkout = false
+                ErrorManager.shared.showError(error, title: "Sync Failed")
+            }
+        }
+    }
+    
+    // MARK: - Garmin Workout Scheduling
+    
+    /// Schedule workout in Garmin Connect for the race date
+    private func scheduleWorkoutInGarmin() async {
+        guard let userId = await resolveUserId() else {
+            await MainActor.run {
+                ErrorManager.shared.showError(
+                    NSError(domain: "Schedule", code: 1, userInfo: [NSLocalizedDescriptionKey: "User not authenticated"]),
+                    title: "Schedule Failed"
+                )
+            }
+            return
+        }
+        
+        guard let raceDate = raceMetadata?.raceDate else {
+            await MainActor.run {
+                ErrorManager.shared.showError(
+                    NSError(domain: "Schedule", code: 2, userInfo: [NSLocalizedDescriptionKey: "Race date is not set. Please set a race date first."]),
+                    title: "No Race Date"
+                )
+            }
+            return
+        }
+        
+        guard connectedProvider?.lowercased() == "garmin" else {
+            await MainActor.run {
+                ErrorManager.shared.showError(
+                    NSError(domain: "Schedule", code: 3, userInfo: [NSLocalizedDescriptionKey: "Garmin is not connected. Please connect Garmin first."]),
+                    title: "Garmin Not Connected"
+                )
+            }
+            return
+        }
+        
+        // First, sync the workout if not already synced
+        // Then schedule it
+        await MainActor.run {
+            isSchedulingWorkout = true
+        }
+        
+        do {
+            // Step 1: Sync workout to Garmin (if needed)
+            let workoutName = selectedRace?.title ?? raceDetails?.name ?? "Race Plan"
+            let syncService = GarminWorkoutSyncService(userId: userId)
+            
+            let workoutId = try await syncService.syncRacePlanToGarmin(
+                workoutName: workoutName,
+                pacingSegments: pacingSegments,
+                fuelingStations: fuelingStations,
+                raceDate: raceDate
+            )
+            
+            // Step 2: Schedule the workout for the race date
+            try await syncService.scheduleWorkout(workoutId: workoutId, date: raceDate)
+            
+            await MainActor.run {
+                isSchedulingWorkout = false
+                ErrorManager.shared.showInfo(
+                    title: "Workout Scheduled",
+                    message: "Workout has been scheduled in Garmin Connect for your race date!"
+                )
+            }
+        } catch {
+            await MainActor.run {
+                isSchedulingWorkout = false
+                ErrorManager.shared.showError(error, title: "Schedule Failed")
+            }
+        }
+    }
     
     private func loadRacePlans(selecting preferredRaceId: UUID? = nil, forceRefresh: Bool = false) async {
         guard let userId = await resolveUserId() else {
