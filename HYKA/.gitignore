@@ -97,6 +97,7 @@ Temporary Items
 
 # Supabase
 .supabase/
+supabase/
 
 # Logs
 *.log
@@ -121,6 +122,3 @@ logs/
 queries/
 instructions/
 shell/
-
-# Note: Config.example.swift should be in the build target
-# but Config.swift should NOT be committed (it's gitignored)
